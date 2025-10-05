@@ -1,17 +1,37 @@
 # Nginx configuration for Mail Server API
 # Reverse proxy for http://{{ hostname }}/api/* -> http://localhost:3000/*
 
-# Redirect HTTP to HTTPS (uncomment after SSL is configured)
-# server {
-#     listen 80;
-#     server_name {{ hostname }};
-#     return 301 https://$server_name$request_uri;
-# }
-
-# HTTP Configuration (change to HTTPS when SSL is ready)
+# Redirect HTTP to HTTPS (enabled after SSL is configured)
 server {
     listen 80;
     server_name {{ hostname }};
+
+    # ACME challenge for Let's Encrypt
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+
+    # Redirect all other HTTP traffic to HTTPS
+    location / {
+        return 301 https://$server_name$request_uri;
+    }
+}
+
+# HTTPS Configuration
+server {
+    listen 443 ssl http2;
+    server_name {{ hostname }};
+
+    # SSL Certificate paths (Let's Encrypt)
+    ssl_certificate /etc/letsencrypt/live/{{ hostname }}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/{{ hostname }}/privkey.pem;
+
+    # SSL Configuration
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers on;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 10m;
 
     # Access and error logs
     access_log /var/log/nginx/mailserver-api-access.log;
@@ -19,36 +39,23 @@ server {
 
     # API endpoint
     location /api/ {
-        # Remove /api prefix when proxying to backend
         rewrite ^/api/(.*) /$1 break;
-
-        # Proxy to Node.js API
         proxy_pass http://127.0.0.1:{{ api_port }};
         proxy_http_version 1.1;
-
-        # Proxy headers
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_set_header X-Forwarded-Host $host;
         proxy_set_header X-Forwarded-Port $server_port;
-
-        # Timeouts
         proxy_connect_timeout 60s;
         proxy_send_timeout 60s;
         proxy_read_timeout 60s;
-
-        # Buffering
         proxy_buffering off;
         proxy_request_buffering off;
-
-        # WebSocket support (if needed in future)
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
     }
 
-    # Health check endpoint (optional, can be accessed without /api prefix)
+    # Health check endpoint
     location /health {
         proxy_pass http://127.0.0.1:{{ api_port }}/health;
         proxy_http_version 1.1;
@@ -57,14 +64,11 @@ server {
     }
 
     # Security headers
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
     add_header X-Content-Type-Options "nosniff" always;
     add_header X-Frame-Options "DENY" always;
     add_header X-XSS-Protection "1; mode=block" always;
     add_header Referrer-Policy "no-referrer-when-downgrade" always;
-
-    # Rate limiting (optional, uncomment to enable)
-    # limit_req_zone $binary_remote_addr zone=api_limit:10m rate=10r/s;
-    # limit_req zone=api_limit burst=20 nodelay;
 
     # Deny access to hidden files
     location ~ /\. {
@@ -73,64 +77,3 @@ server {
         log_not_found off;
     }
 }
-
-# HTTPS Configuration (uncomment after obtaining SSL certificate)
-# server {
-#     listen 443 ssl http2;
-#     server_name {{ hostname }};
-#
-#     # SSL Certificate paths (update after running certbot)
-#     ssl_certificate /etc/letsencrypt/live/{{ hostname }}/fullchain.pem;
-#     ssl_certificate_key /etc/letsencrypt/live/{{ hostname }}/privkey.pem;
-#
-#     # SSL Configuration
-#     ssl_protocols TLSv1.2 TLSv1.3;
-#     ssl_ciphers HIGH:!aNULL:!MD5;
-#     ssl_prefer_server_ciphers on;
-#     ssl_session_cache shared:SSL:10m;
-#     ssl_session_timeout 10m;
-#
-#     # Access and error logs
-#     access_log /var/log/nginx/mailserver-api-access.log;
-#     error_log /var/log/nginx/mailserver-api-error.log;
-#
-#     # API endpoint
-#     location /api/ {
-#         rewrite ^/api/(.*) /$1 break;
-#         proxy_pass http://127.0.0.1:{{ api_port }};
-#         proxy_http_version 1.1;
-#         proxy_set_header Host $host;
-#         proxy_set_header X-Real-IP $remote_addr;
-#         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-#         proxy_set_header X-Forwarded-Proto $scheme;
-#         proxy_set_header X-Forwarded-Host $host;
-#         proxy_set_header X-Forwarded-Port $server_port;
-#         proxy_connect_timeout 60s;
-#         proxy_send_timeout 60s;
-#         proxy_read_timeout 60s;
-#         proxy_buffering off;
-#         proxy_request_buffering off;
-#     }
-#
-#     # Health check endpoint
-#     location /health {
-#         proxy_pass http://127.0.0.1:{{ api_port }}/health;
-#         proxy_http_version 1.1;
-#         proxy_set_header Host $host;
-#         access_log off;
-#     }
-#
-#     # Security headers
-#     add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
-#     add_header X-Content-Type-Options "nosniff" always;
-#     add_header X-Frame-Options "DENY" always;
-#     add_header X-XSS-Protection "1; mode=block" always;
-#     add_header Referrer-Policy "no-referrer-when-downgrade" always;
-#
-#     # Deny access to hidden files
-#     location ~ /\. {
-#         deny all;
-#         access_log off;
-#         log_not_found off;
-#     }
-# }

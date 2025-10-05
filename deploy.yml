@@ -41,6 +41,8 @@
           - nginx
           - curl
           - jq
+          - certbot
+          - python3-certbot-nginx
         state: present
 
     - name: Install Node.js 20.x
@@ -232,6 +234,60 @@
         path: /etc/nginx/sites-enabled/default
         state: absent
       notify: restart nginx
+
+    - name: Obtain Let's Encrypt SSL certificate
+      shell: |
+        certbot certonly --nginx \
+          --non-interactive \
+          --agree-tos \
+          --email postmaster@{{ domain }} \
+          --domains {{ hostname }} \
+          --keep-until-expiring
+      args:
+        creates: /etc/letsencrypt/live/{{ hostname }}/fullchain.pem
+      register: certbot_result
+      ignore_errors: yes
+
+    - name: Create certbot renewal hook directory
+      file:
+        path: /etc/letsencrypt/renewal-hooks/deploy
+        state: directory
+        mode: '0755'
+      when: certbot_result is succeeded
+
+    - name: Create renewal hook script
+      copy:
+        dest: /etc/letsencrypt/renewal-hooks/deploy/reload-mail-services.sh
+        mode: '0755'
+        content: |
+          #!/bin/bash
+          systemctl reload postfix dovecot nginx
+      when: certbot_result is succeeded
+
+    - name: Update Postfix to use Let's Encrypt certificates
+      lineinfile:
+        path: /etc/postfix/main.cf
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+      loop:
+        - { regexp: '^smtpd_tls_cert_file', line: 'smtpd_tls_cert_file = /etc/letsencrypt/live/{{ hostname }}/fullchain.pem' }
+        - { regexp: '^smtpd_tls_key_file', line: 'smtpd_tls_key_file = /etc/letsencrypt/live/{{ hostname }}/privkey.pem' }
+      when: certbot_result is succeeded
+      notify: restart postfix
+
+    - name: Configure Dovecot SSL
+      blockinfile:
+        path: /etc/dovecot/conf.d/10-ssl.conf
+        create: yes
+        block: |
+          ssl = required
+          ssl_cert = </etc/letsencrypt/live/{{ hostname }}/fullchain.pem
+          ssl_key = </etc/letsencrypt/live/{{ hostname }}/privkey.pem
+          ssl_min_protocol = TLSv1.2
+          ssl_cipher_list = HIGH:!aNULL:!MD5
+          ssl_prefer_server_ciphers = yes
+      when: certbot_result is succeeded
+      notify: restart dovecot
 
     - name: Reload systemd daemon
       systemd:

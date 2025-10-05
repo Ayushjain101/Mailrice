@@ -65,7 +65,9 @@ apt-get install -y \
   python3-pymysql \
   nginx \
   curl \
-  jq > /dev/null 2>&1
+  jq \
+  certbot \
+  python3-certbot-nginx > /dev/null 2>&1
 
 # Install Node.js 20.x
 echo -e "${YELLOW}Installing Node.js...${NC}"
@@ -389,6 +391,48 @@ systemctl restart postfix dovecot mailserver-api nginx
 # Wait for services to start
 sleep 2
 
+# Obtain Let's Encrypt SSL certificate
+echo -e "\n${YELLOW}Obtaining SSL certificate...${NC}"
+if certbot certonly --nginx \
+  --non-interactive \
+  --agree-tos \
+  --email postmaster@$DOMAIN \
+  --domains $HOSTNAME \
+  --keep-until-expiring > /dev/null 2>&1; then
+
+  echo -e "${GREEN}✓ SSL certificate obtained${NC}"
+
+  # Create renewal hook
+  mkdir -p /etc/letsencrypt/renewal-hooks/deploy
+  cat > /etc/letsencrypt/renewal-hooks/deploy/reload-mail-services.sh << 'HOOK_EOF'
+#!/bin/bash
+systemctl reload postfix dovecot nginx
+HOOK_EOF
+  chmod +x /etc/letsencrypt/renewal-hooks/deploy/reload-mail-services.sh
+
+  # Update Postfix to use Let's Encrypt
+  sed -i "s|^smtpd_tls_cert_file.*|smtpd_tls_cert_file = /etc/letsencrypt/live/$HOSTNAME/fullchain.pem|" /etc/postfix/main.cf
+  sed -i "s|^smtpd_tls_key_file.*|smtpd_tls_key_file = /etc/letsencrypt/live/$HOSTNAME/privkey.pem|" /etc/postfix/main.cf
+
+  # Configure Dovecot SSL
+  cat > /etc/dovecot/conf.d/10-ssl.conf << SSL_EOF
+ssl = required
+ssl_cert = </etc/letsencrypt/live/$HOSTNAME/fullchain.pem
+ssl_key = </etc/letsencrypt/live/$HOSTNAME/privkey.pem
+ssl_min_protocol = TLSv1.2
+ssl_cipher_list = HIGH:!aNULL:!MD5
+ssl_prefer_server_ciphers = yes
+SSL_EOF
+
+  # Reload services with new certificates
+  systemctl reload postfix dovecot nginx
+
+  echo -e "${GREEN}✓ SSL configured for Postfix, Dovecot, and Nginx${NC}"
+else
+  echo -e "${YELLOW}⚠ SSL certificate not obtained (DNS may not be configured yet)${NC}"
+  echo -e "${YELLOW}  You can run 'certbot --nginx' manually after DNS is configured${NC}"
+fi
+
 # Check service status
 echo -e "${GREEN}========================================${NC}"
 echo -e "${GREEN}  Installation Complete!${NC}"
@@ -415,16 +459,22 @@ echo -e "\n${YELLOW}Next Steps:${NC}"
 echo "1. Configure DNS: Add A record for $HOSTNAME → $SERVER_IP"
 echo ""
 echo "2. Generate API key:"
-echo "   curl -X POST http://$HOSTNAME/api/api-keys -H 'x-api-key: default_key_change_me' -H 'Content-Type: application/json' -d '{\"description\":\"Production Key\"}'"
+echo "   curl -X POST https://$HOSTNAME/api/api-keys -H 'x-api-key: default_key_change_me' -H 'Content-Type: application/json' -d '{\"description\":\"Production Key\"}'"
 echo ""
 echo "3. Add your domain:"
-echo "   curl -X POST http://$HOSTNAME/api/domains -H 'x-api-key: YOUR_API_KEY' -H 'Content-Type: application/json' -d '{\"domain\":\"$DOMAIN\"}'"
+echo "   curl -X POST https://$HOSTNAME/api/domains -H 'x-api-key: YOUR_API_KEY' -H 'Content-Type: application/json' -d '{\"domain\":\"$DOMAIN\"}'"
 echo ""
 echo "4. Create mailbox:"
-echo "   curl -X POST http://$HOSTNAME/api/mailboxes -H 'x-api-key: YOUR_API_KEY' -H 'Content-Type: application/json' -d '{\"email\":\"user@$DOMAIN\",\"password\":\"password123\"}'"
+echo "   curl -X POST https://$HOSTNAME/api/mailboxes -H 'x-api-key: YOUR_API_KEY' -H 'Content-Type: application/json' -d '{\"email\":\"user@$DOMAIN\",\"password\":\"password123\"}'"
 echo ""
 echo "5. Configure remaining DNS records (MX, SPF, DKIM, DMARC)"
 echo ""
-echo "6. Optional: Install SSL certificate with certbot for HTTPS"
+if [ -f /etc/letsencrypt/live/$HOSTNAME/fullchain.pem ]; then
+  echo -e "${GREEN}✓ SSL/TLS: Enabled with Let's Encrypt (auto-renews)${NC}"
+  echo "  API URL: https://$HOSTNAME/api"
+else
+  echo -e "${YELLOW}⚠ SSL/TLS: Not configured (run certbot manually after DNS setup)${NC}"
+  echo "  API URL: http://$HOSTNAME/api"
+fi
 echo ""
 echo -e "${GREEN}========================================${NC}"
