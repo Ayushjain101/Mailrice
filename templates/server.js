@@ -6,6 +6,7 @@ const { exec } = require('child_process');
 const { promisify } = require('util');
 const fs = require('fs').promises;
 const path = require('path');
+const rateLimit = require('express-rate-limit');
 require('dotenv').config();
 
 const execAsync = promisify(exec);
@@ -41,6 +42,42 @@ const pool = mysql.createPool({
   keepAliveInitialDelay: 0
 });
 
+// Rate Limiting Configuration
+// General API rate limit - prevents API abuse
+const generalLimiter = rateLimit({
+  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 60000, // 1 minute default
+  max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 100, // 100 requests per minute default
+  message: { error: 'Too many requests, please try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    // Rate limit by API key if available, otherwise by IP
+    return req.headers['x-api-key'] || req.ip;
+  }
+});
+
+// Strict rate limit for resource-intensive operations (mailbox/domain creation)
+const strictLimiter = rateLimit({
+  windowMs: parseInt(process.env.RATE_LIMIT_STRICT_WINDOW_MS) || 60000, // 1 minute default
+  max: parseInt(process.env.RATE_LIMIT_STRICT_MAX) || 10, // 10 creates per minute default
+  message: { error: 'Too many creation requests. Please slow down.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    return req.headers['x-api-key'] || req.ip;
+  }
+});
+
+// Auth rate limit - prevents brute force attacks on API keys
+const authLimiter = rateLimit({
+  windowMs: parseInt(process.env.RATE_LIMIT_AUTH_WINDOW_MS) || 900000, // 15 minutes default
+  max: parseInt(process.env.RATE_LIMIT_AUTH_MAX) || 5, // 5 failed attempts
+  message: { error: 'Too many failed authentication attempts. Try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: true, // Only count failed auth attempts
+});
+
 // API Key Middleware
 async function validateApiKey(req, res, next) {
   const apiKey = req.headers['x-api-key'];
@@ -65,8 +102,10 @@ async function validateApiKey(req, res, next) {
   }
 }
 
-// Apply API key validation to all routes
-app.use(validateApiKey);
+// Apply rate limiters
+app.use(authLimiter); // Auth rate limit applies to all routes
+app.use(validateApiKey); // API key validation
+app.use(generalLimiter); // General rate limit applies after successful auth
 
 // Helper function to generate DKIM keys
 async function generateDKIMKeys(domain, selector = 'mail') {
@@ -153,7 +192,7 @@ app.get('/domains/:domain', async (req, res) => {
 });
 
 // Add domain
-app.post('/domains', async (req, res) => {
+app.post('/domains', strictLimiter, async (req, res) => {
   const { domain, dkim_selector = 'mail' } = req.body;
 
   if (!domain) {
@@ -268,7 +307,7 @@ app.get('/mailboxes/:email', async (req, res) => {
 });
 
 // Create mailbox
-app.post('/mailboxes', async (req, res) => {
+app.post('/mailboxes', strictLimiter, async (req, res) => {
   const { email, password, quota_mb = 1000 } = req.body;
 
   if (!email || !password) {

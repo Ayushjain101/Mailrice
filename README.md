@@ -187,6 +187,64 @@ All API requests require the `x-api-key` header:
 x-api-key: YOUR_API_KEY
 ```
 
+### Rate Limiting
+
+The API includes built-in rate limiting to prevent abuse and ensure fair usage:
+
+**Three-tier rate limiting system:**
+
+1. **Authentication Rate Limit** (Brute Force Protection)
+   - **Default:** 5 failed attempts per 15 minutes
+   - Only counts failed authentication attempts
+   - Configurable via `RATE_LIMIT_AUTH_MAX` and `RATE_LIMIT_AUTH_WINDOW_MS`
+
+2. **General API Rate Limit**
+   - **Default:** 100 requests per minute
+   - Applies to all endpoints after successful authentication
+   - Configurable via `RATE_LIMIT_MAX_REQUESTS` and `RATE_LIMIT_WINDOW_MS`
+
+3. **Strict Rate Limit** (Resource-Intensive Operations)
+   - **Default:** 10 creation requests per minute
+   - Applies to: `POST /domains` and `POST /mailboxes`
+   - Prevents server overload during bulk operations
+   - Configurable via `RATE_LIMIT_STRICT_MAX` and `RATE_LIMIT_STRICT_WINDOW_MS`
+
+**Rate limit by:** API key (if provided) or IP address
+
+**Response Headers:**
+- `RateLimit-Limit` - Maximum requests allowed
+- `RateLimit-Remaining` - Requests remaining in current window
+- `RateLimit-Reset` - Time when rate limit resets
+
+**Rate limit exceeded response:**
+```json
+{
+  "error": "Too many requests, please try again later."
+}
+```
+HTTP Status: `429 Too Many Requests`
+
+**Configuration:**
+Edit rate limits in your `.env` file:
+```bash
+# General API rate limiting
+RATE_LIMIT_WINDOW_MS=60000        # 1 minute window
+RATE_LIMIT_MAX_REQUESTS=100       # 100 requests per window
+
+# Strict rate limiting (mailbox/domain creation)
+RATE_LIMIT_STRICT_WINDOW_MS=60000 # 1 minute window
+RATE_LIMIT_STRICT_MAX=10          # 10 creates per window
+
+# Auth rate limiting (brute force protection)
+RATE_LIMIT_AUTH_WINDOW_MS=900000  # 15 minute window
+RATE_LIMIT_AUTH_MAX=5             # 5 failed attempts
+```
+
+**For Cold Email Agencies:**
+- Adjust `RATE_LIMIT_STRICT_MAX` higher if bulk creating mailboxes
+- Recommended: 20-50 for high-volume operations
+- Monitor API responses for rate limit headers
+
 ### Endpoints
 
 #### Health Check
