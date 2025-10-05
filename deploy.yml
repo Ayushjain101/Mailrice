@@ -75,6 +75,7 @@
         password: "{{ db_password }}"
         priv: "{{ db_name }}.*:ALL"
         state: present
+        plugin: caching_sha2_password
         login_unix_socket: /var/run/mysqld/mysqld.sock
 
     - name: Copy database schema
