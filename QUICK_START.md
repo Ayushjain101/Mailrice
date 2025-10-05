@@ -1,6 +1,21 @@
 # Quick Start Guide
 
-## Fastest Way to Deploy
+## 🚀 ONE-LINE INSTALL (Easiest!)
+
+**No setup required - works on any OS!**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Ayushjain101/mailserver-deployment/main/deploy.sh | bash -s -- \
+  SERVER_IP SSH_USER SSH_PASSWORD DOMAIN HOSTNAME
+```
+
+Replace with your values and run! The script auto-installs all dependencies.
+
+📖 **[See full guide](ONE_LINE_INSTALL.md)**
+
+---
+
+## Alternative Methods
 
 ### 1. Ansible Method (3 Commands)
 
