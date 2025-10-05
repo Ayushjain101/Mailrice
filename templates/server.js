@@ -153,10 +153,12 @@ function generateSHA512Password(password) {
       // Wait for next tick to ensure all data events are processed
       setImmediate(() => {
         if (code === 0) {
-          const hash = stdout.trim();
+          let hash = stdout.trim();
           if (!hash || hash.length < 20) {
             reject(new Error('Invalid password hash generated'));
           } else {
+            // Remove {SHA512-CRYPT} prefix as Dovecot doesn't need it when default_pass_scheme is set
+            hash = hash.replace(/^\{SHA512-CRYPT\}/, '');
             resolve(hash);
           }
         } else {
@@ -301,7 +303,6 @@ async function generateDKIMKeys(domain, selector = 'mail') {
 
     // Generate DKIM key using spawn (no shell injection)
     // Note: opendkim-genkey requires sudo (configured in sudoers)
-    // The sudo command will set appropriate permissions automatically
     await spawnAsync('sudo', [
       'opendkim-genkey',
       '-b', '2048',
@@ -311,8 +312,13 @@ async function generateDKIMKeys(domain, selector = 'mail') {
       '-v'
     ]);
 
-    // Note: opendkim-genkey sets proper permissions (600) on private key automatically
-    // No need to chmod as it's already done by the tool
+    // Change ownership to opendkim:opendkim so mailapi (in opendkim group) can read
+    await spawnAsync('sudo', ['chown', '-R', 'opendkim:opendkim', dkimDir]);
+
+    // Set permissions so group can read (640 for files, 750 for directory)
+    await spawnAsync('sudo', ['chmod', '750', dkimDir]);
+    await spawnAsync('sudo', ['chmod', '640', privateKeyPath]);
+    await spawnAsync('sudo', ['chmod', '640', txtPath]);
 
     // Read keys using Node.js fs (mailapi user is in opendkim group)
     const privateKey = await fs.readFile(privateKeyPath, 'utf8');
@@ -386,10 +392,9 @@ app.get('/domains', async (req, res) => {
     const [countResult] = await pool.execute('SELECT COUNT(*) as total FROM virtual_domains');
     const total = countResult[0].total;
 
-    // Get paginated results
+    // Get paginated results (LIMIT/OFFSET must be integers, not placeholders in MySQL)
     const [rows] = await pool.execute(
-      'SELECT id, name, dkim_selector, dkim_public_key, created_at FROM virtual_domains ORDER BY created_at DESC LIMIT ? OFFSET ?',
-      [limit, offset]
+      `SELECT id, name, dkim_selector, dkim_public_key, created_at FROM virtual_domains ORDER BY created_at DESC LIMIT ${parseInt(limit)} OFFSET ${parseInt(offset)}`
     );
 
     res.json({
@@ -603,10 +608,9 @@ app.get('/mailboxes', async (req, res) => {
     const [countResult] = await pool.execute('SELECT COUNT(*) as total FROM virtual_users');
     const total = countResult[0].total;
 
-    // Get paginated results
+    // Get paginated results (LIMIT/OFFSET must be integers, not placeholders in MySQL)
     const [rows] = await pool.execute(
-      'SELECT u.id, u.email, u.quota_mb, u.created_at, d.name as domain FROM virtual_users u JOIN virtual_domains d ON u.domain_id = d.id ORDER BY u.created_at DESC LIMIT ? OFFSET ?',
-      [limit, offset]
+      `SELECT u.id, u.email, u.quota_mb, u.created_at, d.name as domain FROM virtual_users u JOIN virtual_domains d ON u.domain_id = d.id ORDER BY u.created_at DESC LIMIT ${parseInt(limit)} OFFSET ${parseInt(offset)}`
     );
 
     res.json({
@@ -699,11 +703,8 @@ app.post('/mailboxes', strictLimiter, async (req, res) => {
     await fs.mkdir(path.join(maildir, 'new'), { recursive: true, mode: 0o700 });
     await fs.mkdir(path.join(maildir, 'tmp'), { recursive: true, mode: 0o700 });
 
-    // Set ownership to vmail:vmail
-    await fs.chown(maildir, VMAIL_UID, VMAIL_GID);
-    await fs.chown(path.join(maildir, 'cur'), VMAIL_UID, VMAIL_GID);
-    await fs.chown(path.join(maildir, 'new'), VMAIL_UID, VMAIL_GID);
-    await fs.chown(path.join(maildir, 'tmp'), VMAIL_UID, VMAIL_GID);
+    // Set ownership to vmail:vmail using sudo (configured in sudoers)
+    await spawnAsync('sudo', ['chown', '-R', 'vmail:vmail', maildir]);
 
     // Insert mailbox into database
     const [result] = await connection.execute(

@@ -100,6 +100,13 @@
         create_home: yes
         system: yes
 
+    - name: Set /var/vmail permissions for group write access
+      file:
+        path: /var/vmail
+        mode: '0770'
+        owner: vmail
+        group: vmail
+
     - name: Create MySQL database
       mysql_db:
         name: "{{ db_name }}"
@@ -244,6 +251,9 @@
         content: |
           mailapi ALL=(ALL) NOPASSWD: /usr/sbin/opendkim-genkey
           mailapi ALL=(ALL) NOPASSWD: /usr/bin/opendkim-genkey
+          mailapi ALL=(ALL) NOPASSWD: /bin/chown * /etc/opendkim/keys/*
+          mailapi ALL=(ALL) NOPASSWD: /bin/chmod * /etc/opendkim/keys/*
+          mailapi ALL=(ALL) NOPASSWD: /bin/chown * /var/vmail/*
           mailapi ALL=(ALL) NOPASSWD: /bin/systemctl reload opendkim
           mailapi ALL=(ALL) NOPASSWD: /bin/systemctl restart opendkim
         validate: 'visudo -cf %s'
