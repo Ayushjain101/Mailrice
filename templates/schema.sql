@@ -8,7 +8,8 @@ CREATE TABLE IF NOT EXISTS virtual_domains (
   dkim_private_key TEXT,
   dkim_public_key TEXT,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  INDEX idx_name (name)
+  INDEX idx_name (name),
+  INDEX idx_created_at (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Virtual users (mailboxes) table
@@ -21,7 +22,9 @@ CREATE TABLE IF NOT EXISTS virtual_users (
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (domain_id) REFERENCES virtual_domains(id) ON DELETE CASCADE,
   INDEX idx_email (email),
-  INDEX idx_domain_id (domain_id)
+  INDEX idx_domain_id (domain_id),
+  INDEX idx_domain_email (domain_id, email),
+  INDEX idx_created_at (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Virtual aliases table
@@ -32,7 +35,11 @@ CREATE TABLE IF NOT EXISTS virtual_aliases (
   destination VARCHAR(255) NOT NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (domain_id) REFERENCES virtual_domains(id) ON DELETE CASCADE,
-  INDEX idx_source (source)
+  UNIQUE KEY unique_source (source),
+  INDEX idx_source (source),
+  INDEX idx_destination (destination),
+  INDEX idx_domain_id (domain_id),
+  INDEX idx_created_at (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- API keys table
@@ -41,7 +48,9 @@ CREATE TABLE IF NOT EXISTS api_keys (
   api_key VARCHAR(64) NOT NULL UNIQUE,
   description VARCHAR(255),
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  INDEX idx_api_key (api_key)
+  last_used_at TIMESTAMP NULL,
+  INDEX idx_api_key (api_key),
+  INDEX idx_created_at (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Insert default API key

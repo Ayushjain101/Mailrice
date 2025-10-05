@@ -348,6 +348,164 @@
       systemd:
         daemon_reload: yes
 
+    - name: Install UFW firewall
+      apt:
+        name: ufw
+        state: present
+
+    - name: Configure UFW - Allow SSH
+      ufw:
+        rule: allow
+        port: '22'
+        proto: tcp
+
+    - name: Configure UFW - Allow HTTP
+      ufw:
+        rule: allow
+        port: '80'
+        proto: tcp
+
+    - name: Configure UFW - Allow HTTPS
+      ufw:
+        rule: allow
+        port: '443'
+        proto: tcp
+
+    - name: Configure UFW - Allow SMTP
+      ufw:
+        rule: allow
+        port: '25'
+        proto: tcp
+
+    - name: Configure UFW - Allow SMTP Submission
+      ufw:
+        rule: allow
+        port: '587'
+        proto: tcp
+
+    - name: Configure UFW - Allow SMTPS
+      ufw:
+        rule: allow
+        port: '465'
+        proto: tcp
+
+    - name: Configure UFW - Allow IMAP
+      ufw:
+        rule: allow
+        port: '143'
+        proto: tcp
+
+    - name: Configure UFW - Allow IMAPS
+      ufw:
+        rule: allow
+        port: '993'
+        proto: tcp
+
+    - name: Configure UFW - Allow POP3
+      ufw:
+        rule: allow
+        port: '110'
+        proto: tcp
+
+    - name: Configure UFW - Allow POP3S
+      ufw:
+        rule: allow
+        port: '995'
+        proto: tcp
+
+    - name: Configure UFW - Allow API port
+      ufw:
+        rule: allow
+        port: "{{ api_port }}"
+        proto: tcp
+
+    - name: Enable UFW
+      ufw:
+        state: enabled
+        policy: deny
+
+    - name: Install Fail2ban
+      apt:
+        name: fail2ban
+        state: present
+
+    - name: Create Fail2ban jail for Postfix
+      copy:
+        dest: /etc/fail2ban/jail.d/postfix.conf
+        content: |
+          [postfix]
+          enabled = true
+          port = smtp,465,587
+          filter = postfix
+          logpath = /var/log/mail.log
+          maxretry = 5
+          bantime = 3600
+          findtime = 600
+
+          [postfix-sasl]
+          enabled = true
+          port = smtp,465,587
+          filter = postfix-sasl
+          logpath = /var/log/mail.log
+          maxretry = 3
+          bantime = 3600
+          findtime = 600
+      notify: restart fail2ban
+
+    - name: Create Fail2ban jail for Dovecot
+      copy:
+        dest: /etc/fail2ban/jail.d/dovecot.conf
+        content: |
+          [dovecot]
+          enabled = true
+          port = pop3,pop3s,imap,imaps
+          filter = dovecot
+          logpath = /var/log/mail.log
+          maxretry = 3
+          bantime = 3600
+          findtime = 600
+      notify: restart fail2ban
+
+    - name: Create Fail2ban jail for SSH
+      copy:
+        dest: /etc/fail2ban/jail.d/sshd.conf
+        content: |
+          [sshd]
+          enabled = true
+          port = ssh
+          logpath = /var/log/auth.log
+          maxretry = 5
+          bantime = 3600
+          findtime = 600
+      notify: restart fail2ban
+
+    - name: Create Fail2ban jail for Nginx
+      copy:
+        dest: /etc/fail2ban/jail.d/nginx.conf
+        content: |
+          [nginx-http-auth]
+          enabled = true
+          port = http,https
+          logpath = /var/log/nginx/error.log
+          maxretry = 3
+          bantime = 3600
+          findtime = 600
+
+          [nginx-limit-req]
+          enabled = true
+          port = http,https
+          logpath = /var/log/nginx/error.log
+          maxretry = 10
+          bantime = 600
+          findtime = 600
+      notify: restart fail2ban
+
+    - name: Enable and start Fail2ban
+      systemd:
+        name: fail2ban
+        enabled: yes
+        state: started
+
     - name: Enable and start services
       systemd:
         name: "{{ item }}"
@@ -423,4 +581,9 @@
     - name: restart nginx
       systemd:
         name: nginx
+        state: restarted
+
+    - name: restart fail2ban
+      systemd:
+        name: fail2ban
         state: restarted

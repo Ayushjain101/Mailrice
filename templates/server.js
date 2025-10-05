@@ -6,7 +6,45 @@ const { spawn } = require('child_process');
 const fs = require('fs').promises;
 const path = require('path');
 const rateLimit = require('express-rate-limit');
+const morgan = require('morgan');
 require('dotenv').config();
+
+// ==================== ENVIRONMENT VALIDATION ====================
+
+// Validate required environment variables
+const requiredEnvVars = [
+  'DB_HOST',
+  'DB_USER',
+  'DB_PASSWORD',
+  'DB_NAME',
+  'MASTER_API_KEY'
+];
+
+const missingEnvVars = requiredEnvVars.filter(varName => !process.env[varName]);
+
+if (missingEnvVars.length > 0) {
+  console.error('ERROR: Missing required environment variables:');
+  missingEnvVars.forEach(varName => {
+    console.error(`  - ${varName}`);
+  });
+  console.error('\nPlease set these variables in your .env file or environment.');
+  console.error('Example .env file:');
+  console.error('DB_HOST=localhost');
+  console.error('DB_USER=mailuser');
+  console.error('DB_PASSWORD=your_secure_password');
+  console.error('DB_NAME=mailserver');
+  console.error('MASTER_API_KEY=your_master_api_key');
+  process.exit(1);
+}
+
+// Validate MASTER_API_KEY strength
+if (process.env.MASTER_API_KEY.length < 32) {
+  console.error('ERROR: MASTER_API_KEY must be at least 32 characters long for security.');
+  console.error('Generate a secure key with: openssl rand -hex 32');
+  process.exit(1);
+}
+
+console.log('✓ Environment variables validated');
 
 // System user IDs for file ownership
 const VMAIL_UID = parseInt(process.env.VMAIL_UID) || 5000;
@@ -112,6 +150,10 @@ function generateSHA512Password(password) {
   });
 }
 const app = express();
+
+// HTTP request logging
+app.use(morgan('combined'));
+
 app.use(bodyParser.json());
 
 // Database connection pool
@@ -180,6 +222,9 @@ async function validateApiKey(req, res, next) {
     if (rows.length === 0) {
       return res.status(403).json({ error: 'Invalid API key' });
     }
+
+    // Update last_used_at timestamp (fire and forget, don't wait)
+    pool.execute('UPDATE api_keys SET last_used_at = NOW() WHERE id = ?', [rows[0].id]).catch(() => {});
 
     next();
   } catch (error) {
@@ -283,8 +328,35 @@ async function generateDKIMKeys(domain, selector = 'mail') {
 // Get all domains
 app.get('/domains', async (req, res) => {
   try {
-    const [rows] = await pool.execute('SELECT id, name, dkim_selector, dkim_public_key, created_at FROM virtual_domains');
-    res.json({ domains: rows });
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 50;
+
+    // Validate pagination parameters
+    if (page < 1 || limit < 1 || limit > 1000) {
+      return res.status(400).json({ error: 'Invalid pagination parameters. Page must be >= 1, limit must be 1-1000' });
+    }
+
+    const offset = (page - 1) * limit;
+
+    // Get total count
+    const [countResult] = await pool.execute('SELECT COUNT(*) as total FROM virtual_domains');
+    const total = countResult[0].total;
+
+    // Get paginated results
+    const [rows] = await pool.execute(
+      'SELECT id, name, dkim_selector, dkim_public_key, created_at FROM virtual_domains ORDER BY created_at DESC LIMIT ? OFFSET ?',
+      [limit, offset]
+    );
+
+    res.json({
+      data: rows,
+      pagination: {
+        page: page,
+        limit: limit,
+        total: total,
+        pages: Math.ceil(total / limit)
+      }
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -362,6 +434,24 @@ app.delete('/domains/:domain', async (req, res) => {
   }
 
   try {
+    // Check for existing mailboxes
+    const [domainRows] = await pool.execute('SELECT id FROM virtual_domains WHERE name = ?', [req.params.domain]);
+
+    if (domainRows.length === 0) {
+      return res.status(404).json({ error: 'Domain not found' });
+    }
+
+    const domainId = domainRows[0].id;
+    const [mailboxes] = await pool.execute('SELECT COUNT(*) as count FROM virtual_users WHERE domain_id = ?', [domainId]);
+
+    if (mailboxes[0].count > 0) {
+      return res.status(409).json({
+        error: 'Cannot delete domain with existing mailboxes',
+        mailbox_count: mailboxes[0].count,
+        message: 'Delete all mailboxes first before deleting the domain'
+      });
+    }
+
     const [result] = await pool.execute('DELETE FROM virtual_domains WHERE name = ?', [req.params.domain]);
 
     if (result.affectedRows === 0) {
@@ -412,10 +502,35 @@ app.get('/domains/:domain/dkim', async (req, res) => {
 // Get all mailboxes
 app.get('/mailboxes', async (req, res) => {
   try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 50;
+
+    // Validate pagination parameters
+    if (page < 1 || limit < 1 || limit > 1000) {
+      return res.status(400).json({ error: 'Invalid pagination parameters. Page must be >= 1, limit must be 1-1000' });
+    }
+
+    const offset = (page - 1) * limit;
+
+    // Get total count
+    const [countResult] = await pool.execute('SELECT COUNT(*) as total FROM virtual_users');
+    const total = countResult[0].total;
+
+    // Get paginated results
     const [rows] = await pool.execute(
-      'SELECT u.id, u.email, u.quota_mb, u.created_at, d.name as domain FROM virtual_users u JOIN virtual_domains d ON u.domain_id = d.id'
+      'SELECT u.id, u.email, u.quota_mb, u.created_at, d.name as domain FROM virtual_users u JOIN virtual_domains d ON u.domain_id = d.id ORDER BY u.created_at DESC LIMIT ? OFFSET ?',
+      [limit, offset]
     );
-    res.json({ mailboxes: rows });
+
+    res.json({
+      data: rows,
+      pagination: {
+        page: page,
+        limit: limit,
+        total: total,
+        pages: Math.ceil(total / limit)
+      }
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -569,6 +684,209 @@ app.delete('/mailboxes/:email', async (req, res) => {
     }
 
     res.json({ success: true, message: 'Mailbox deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ==================== ALIAS ENDPOINTS ====================
+
+// Get aliases for a specific domain
+app.get('/domains/:domain/aliases', async (req, res) => {
+  try {
+    // Validate domain
+    if (!isValidDomain(req.params.domain)) {
+      return res.status(400).json({ error: 'Invalid domain name' });
+    }
+
+    // Check if domain exists
+    const [domainRows] = await pool.execute('SELECT id FROM virtual_domains WHERE name = ?', [req.params.domain]);
+    if (domainRows.length === 0) {
+      return res.status(404).json({ error: 'Domain not found' });
+    }
+
+    const domainId = domainRows[0].id;
+
+    // Get aliases for this domain
+    const [rows] = await pool.execute(
+      'SELECT id, source, destination, created_at FROM virtual_aliases WHERE domain_id = ? ORDER BY created_at DESC',
+      [domainId]
+    );
+
+    res.json({ aliases: rows });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Create alias
+app.post('/aliases', strictLimiter, async (req, res) => {
+  const { source, destination } = req.body;
+
+  // Validate source email
+  if (!source || !isValidEmail(source)) {
+    return res.status(400).json({ error: 'Invalid source email address' });
+  }
+
+  // Validate destination email
+  if (!destination || !isValidEmail(destination)) {
+    return res.status(400).json({ error: 'Invalid destination email address' });
+  }
+
+  // Extract domain from source
+  const domain = source.split('@')[1];
+
+  try {
+    // Check if domain exists
+    const [domainRows] = await pool.execute('SELECT id FROM virtual_domains WHERE name = ?', [domain]);
+    if (domainRows.length === 0) {
+      return res.status(404).json({ error: 'Domain not found. The source email domain must exist.' });
+    }
+
+    const domainId = domainRows[0].id;
+
+    // Check if source already exists as a mailbox or alias
+    const [mailboxCheck] = await pool.execute('SELECT id FROM virtual_users WHERE email = ?', [source]);
+    if (mailboxCheck.length > 0) {
+      return res.status(409).json({ error: 'Source email already exists as a mailbox. Cannot create alias.' });
+    }
+
+    // Insert alias
+    const [result] = await pool.execute(
+      'INSERT INTO virtual_aliases (domain_id, source, destination) VALUES (?, ?, ?)',
+      [domainId, source, destination]
+    );
+
+    res.status(201).json({
+      success: true,
+      alias: {
+        id: result.insertId,
+        source: source,
+        destination: destination
+      },
+      message: 'Alias created successfully'
+    });
+  } catch (error) {
+    if (error.code === 'ER_DUP_ENTRY') {
+      return res.status(409).json({ error: 'Alias with this source email already exists' });
+    }
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Delete alias
+app.delete('/aliases/:id', async (req, res) => {
+  const aliasId = parseInt(req.params.id);
+
+  if (!aliasId || aliasId < 1) {
+    return res.status(400).json({ error: 'Invalid alias ID' });
+  }
+
+  try {
+    const [result] = await pool.execute('DELETE FROM virtual_aliases WHERE id = ?', [aliasId]);
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Alias not found' });
+    }
+
+    res.json({ success: true, message: 'Alias deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ==================== QUOTA ENDPOINTS ====================
+
+// Get mailbox quota usage
+app.get('/mailboxes/:email/quota', async (req, res) => {
+  try {
+    // Validate email
+    if (!isValidEmail(req.params.email)) {
+      return res.status(400).json({ error: 'Invalid email address' });
+    }
+
+    // Check if mailbox exists and get quota limit
+    const [mailboxRows] = await pool.execute(
+      'SELECT id, email, quota_mb FROM virtual_users WHERE email = ?',
+      [req.params.email]
+    );
+
+    if (mailboxRows.length === 0) {
+      return res.status(404).json({ error: 'Mailbox not found' });
+    }
+
+    const quotaLimit = mailboxRows[0].quota_mb;
+
+    // Calculate disk usage using du command
+    const domain = req.params.email.split('@')[1];
+    const username = req.params.email.split('@')[0];
+    const maildir = path.join('/var/vmail', domain, username);
+
+    // Validate path safety
+    if (!await isPathSafe('/var/vmail', maildir)) {
+      return res.status(400).json({ error: 'Invalid mailbox path' });
+    }
+
+    let usedMb = 0;
+    try {
+      // Check if maildir exists
+      await fs.access(maildir);
+
+      // Use du to calculate disk usage (in KB), then convert to MB
+      const result = await spawnAsync('du', ['-sk', maildir]);
+      const usedKb = parseInt(result.stdout.split('\t')[0]);
+      usedMb = Math.round(usedKb / 1024);
+    } catch (error) {
+      // Maildir doesn't exist yet or du failed, usage is 0
+      usedMb = 0;
+    }
+
+    const percentUsed = quotaLimit > 0 ? Math.round((usedMb / quotaLimit) * 100) : 0;
+
+    res.json({
+      email: req.params.email,
+      quota: {
+        limit_mb: quotaLimit,
+        used_mb: usedMb,
+        available_mb: Math.max(0, quotaLimit - usedMb),
+        percent_used: percentUsed
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Update mailbox quota limit
+app.put('/mailboxes/:email/quota', async (req, res) => {
+  const { quota_mb } = req.body;
+
+  // Validate email
+  if (!isValidEmail(req.params.email)) {
+    return res.status(400).json({ error: 'Invalid email address' });
+  }
+
+  // Validate quota
+  if (typeof quota_mb !== 'number' || quota_mb < 1 || quota_mb > 100000) {
+    return res.status(400).json({ error: 'Invalid quota (1-100000 MB)' });
+  }
+
+  try {
+    const [result] = await pool.execute(
+      'UPDATE virtual_users SET quota_mb = ? WHERE email = ?',
+      [quota_mb, req.params.email]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Mailbox not found' });
+    }
+
+    res.json({
+      success: true,
+      email: req.params.email,
+      quota_mb: quota_mb,
+      message: 'Quota updated successfully'
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
