@@ -11,7 +11,7 @@
     hostname: "{{ hostname }}"
     db_name: mailserver
     db_user: mailuser
-    db_password: "{{ db_password | default('SecureMailPass' + lookup('password', '/dev/null length=15 chars=ascii_letters,digits')) }}"
+    db_password: "{{ lookup('env', 'DB_PASSWORD') | default('SecureMailPass' + lookup('password', '/dev/null length=15 chars=ascii_letters,digits'), true) }}"
     api_port: 3000
     vmail_uid: 5000
     vmail_gid: 5000
@@ -47,6 +47,12 @@
         apt-get install -y nodejs
       args:
         creates: /usr/bin/node
+
+    - name: Create vmail group
+      group:
+        name: vmail
+        gid: "{{ vmail_gid }}"
+        system: yes
 
     - name: Create vmail user
       user:
