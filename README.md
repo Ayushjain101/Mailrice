@@ -12,17 +12,17 @@ curl -fsSL https://raw.githubusercontent.com/Ayushjain101/mailserver-deployment/
   SERVER_IP SSH_USER SSH_PASSWORD DOMAIN HOSTNAME
 ```
 
-### With Auto DNS (Cloudflare) - Zero Configuration!
+### With Auto DNS + Email Notification - Ultimate Zero Configuration!
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Ayushjain101/mailserver-deployment/main/deploy.sh | bash -s -- \
-  SERVER_IP SSH_USER SSH_PASSWORD DOMAIN HOSTNAME DB_PASSWORD CF_EMAIL CF_API_KEY CF_ZONE_ID
+  SERVER_IP SSH_USER SSH_PASSWORD DOMAIN HOSTNAME DB_PASSWORD CF_EMAIL CF_API_KEY CF_ZONE_ID EMAIL_RECIPIENT
 ```
 
 **Example:**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Ayushjain101/mailserver-deployment/main/deploy.sh | bash -s -- \
   144.217.165.40 ubuntu MyPassword example.com mail.example.com '' \
-  you@email.com your_cf_api_key your_zone_id
+  you@email.com your_cf_api_key your_zone_id you@email.com
 ```
 
 **What it does:**
@@ -31,6 +31,7 @@ curl -fsSL https://raw.githubusercontent.com/Ayushjain101/mailserver-deployment/
 - ✅ Deploys complete mail server in 7-10 minutes
 - ✅ **Auto-configures DNS via Cloudflare** (when credentials provided)
 - ✅ Generates API key and adds domain automatically
+- ✅ **Emails complete documentation with all credentials** (when email provided)
 - ✅ Works on any provider (AWS, DigitalOcean, OVH, etc.)
 
 📖 **[Full One-Line Install Guide](ONE_LINE_INSTALL.md)**

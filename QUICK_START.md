@@ -10,13 +10,13 @@ curl -fsSL https://raw.githubusercontent.com/Ayushjain101/mailserver-deployment/
   SERVER_IP SSH_USER SSH_PASSWORD DOMAIN HOSTNAME
 ```
 
-### With Auto DNS (Cloudflare) - Zero Configuration!
+### With Auto DNS + Email Notification - Ultimate Zero Configuration!
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Ayushjain101/mailserver-deployment/main/deploy.sh | bash -s -- \
-  SERVER_IP SSH_USER SSH_PASSWORD DOMAIN HOSTNAME '' CF_EMAIL CF_API_KEY CF_ZONE_ID
+  SERVER_IP SSH_USER SSH_PASSWORD DOMAIN HOSTNAME '' CF_EMAIL CF_API_KEY CF_ZONE_ID EMAIL_RECIPIENT
 ```
 
-Replace with your values and run! The script auto-installs all dependencies and optionally configures DNS automatically.
+Replace with your values and run! The script auto-installs all dependencies, configures DNS automatically, and emails you complete documentation with all credentials!
 
 📖 **[See full guide](ONE_LINE_INSTALL.md)**
 

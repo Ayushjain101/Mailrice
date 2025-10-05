@@ -4,7 +4,34 @@ Deploy a complete mail server with a single command - no manual setup required!
 
 ## 🚀 Quick Install
 
-### Method 1: Auto DNS (Recommended - Zero Configuration!)
+### Method 1: Auto DNS + Email Notification (Recommended - Ultimate Zero Configuration!)
+
+**With Cloudflare DNS automation AND email notification - truly hands-free deployment:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Ayushjain101/mailserver-deployment/main/deploy.sh | bash -s -- \
+  SERVER_IP SSH_USER SSH_PASSWORD DOMAIN HOSTNAME DB_PASSWORD CF_EMAIL CF_API_KEY CF_ZONE_ID EMAIL_RECIPIENT
+```
+
+**Example:**
+```bash
+curl -fsSL https://raw.githubusercontent.com/Ayushjain101/mailserver-deployment/main/deploy.sh | bash -s -- \
+  144.217.165.40 ubuntu MyPassword123 example.com mail.example.com '' \
+  you@email.com your_cloudflare_global_api_key your_zone_id you@email.com
+```
+
+**What it does automatically:**
+- ✅ Installs all dependencies (Git, Ansible, sshpass)
+- ✅ Deploys complete mail server
+- ✅ Generates production API key
+- ✅ Adds domain and generates DKIM
+- ✅ **Creates all DNS records automatically** (A, MX, SPF, DKIM, DMARC)
+- ✅ **Emails you complete documentation with all credentials and setup details**
+- ✅ Returns API key and ready-to-use setup
+
+---
+
+### Method 2: Auto DNS Only (No Email Notification)
 
 **With Cloudflare DNS automation - no manual DNS setup required:**
 
@@ -20,17 +47,9 @@ curl -fsSL https://raw.githubusercontent.com/Ayushjain101/mailserver-deployment/
   you@email.com your_cloudflare_global_api_key your_zone_id
 ```
 
-**What it does automatically:**
-- ✅ Installs all dependencies (Git, Ansible, sshpass)
-- ✅ Deploys complete mail server
-- ✅ Generates production API key
-- ✅ Adds domain and generates DKIM
-- ✅ **Creates all DNS records automatically** (A, MX, SPF, DKIM, DMARC)
-- ✅ Returns API key and ready-to-use setup
-
 ---
 
-### Method 2: Manual DNS (Basic Install)
+### Method 3: Manual DNS (Basic Install)
 
 **Without DNS automation - you configure DNS manually:**
 
@@ -47,7 +66,7 @@ curl -fsSL https://raw.githubusercontent.com/Ayushjain101/mailserver-deployment/
 
 ---
 
-### Method 3: Clone & Deploy
+### Method 4: Clone & Deploy
 
 ```bash
 git clone https://github.com/Ayushjain101/mailserver-deployment.git && \
@@ -78,8 +97,11 @@ cd mailserver-deployment && \
 | CF_EMAIL | Cloudflare account email (for auto DNS) | `you@email.com` | Optional |
 | CF_API_KEY | Cloudflare Global API Key (for auto DNS) | `your_api_key` | Optional |
 | CF_ZONE_ID | Cloudflare Zone ID (for auto DNS) | `zone_id` | Optional |
+| EMAIL_RECIPIENT | Email address to receive deployment docs | `you@email.com` | Optional |
 
-**Note:** If all three Cloudflare parameters (CF_EMAIL, CF_API_KEY, CF_ZONE_ID) are provided, DNS will be configured automatically!
+**Notes:**
+- If all three Cloudflare parameters (CF_EMAIL, CF_API_KEY, CF_ZONE_ID) are provided, DNS will be configured automatically!
+- If EMAIL_RECIPIENT is provided, you'll receive a comprehensive deployment documentation email with all credentials and setup details!
 
 ---
 
@@ -139,13 +161,13 @@ The script automatically:
 
 ## 📝 Complete Example
 
-### Example 1: With Auto DNS (Zero Configuration!)
+### Example 1: With Auto DNS + Email Notification (Ultimate Zero Configuration!)
 
 **Step 1: Run One-Line Install**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Ayushjain101/mailserver-deployment/main/deploy.sh | bash -s -- \
   15.204.242.87 ubuntu MyPassword mycompany.com mail.mycompany.com '' \
-  you@email.com cf_global_api_key cf_zone_id
+  you@email.com cf_global_api_key cf_zone_id you@email.com
 ```
 
 **Output:**
@@ -196,9 +218,25 @@ API Details:
   API Key: abc123xyz...
 
 Your mail server is ready with DNS configured! 🚀
+
+Sending deployment documentation via email...
+Creating email message...
+Sending email to you@email.com...
+✓ Deployment documentation sent to you@email.com
+  (Note: Email may take a few minutes to arrive)
 ```
 
-**Step 2: Create your first mailbox**
+**Step 2: Check your email inbox**
+
+You'll receive a comprehensive email with:
+- Complete deployment details
+- API key and endpoints
+- DNS configuration summary
+- Email client setup instructions
+- Full API documentation
+- Next steps and support links
+
+**Step 3: Create your first mailbox**
 ```bash
 curl -X POST http://mail.mycompany.com/api/mailboxes \
   -H "x-api-key: abc123xyz..." \

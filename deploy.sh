@@ -26,12 +26,13 @@ DB_PASSWORD="${6:-}"
 CF_EMAIL="${7:-}"
 CF_API_KEY="${8:-}"
 CF_ZONE_ID="${9:-}"
+EMAIL_RECIPIENT="${10:-}"
 
 # Validate required arguments
 if [ -z "$SERVER_IP" ] || [ -z "$SSH_USER" ] || [ -z "$SSH_PASS" ] || [ -z "$DOMAIN" ] || [ -z "$HOSTNAME" ]; then
   echo -e "${RED}Error: Missing required arguments${NC}"
   echo ""
-  echo "Usage: $0 <server_ip> <ssh_user> <ssh_password> <domain> <hostname> [db_password] [cf_email] [cf_api_key] [cf_zone_id]"
+  echo "Usage: $0 <server_ip> <ssh_user> <ssh_password> <domain> <hostname> [db_password] [cf_email] [cf_api_key] [cf_zone_id] [email_recipient]"
   echo ""
   echo "Example (Basic):"
   echo "  $0 1.2.3.4 ubuntu mypassword example.com mail.example.com"
@@ -39,18 +40,23 @@ if [ -z "$SERVER_IP" ] || [ -z "$SSH_USER" ] || [ -z "$SSH_PASS" ] || [ -z "$DOM
   echo "Example (With Auto-DNS via Cloudflare):"
   echo "  $0 1.2.3.4 ubuntu pass example.com mail.example.com dbpass123 you@email.com cf_api_key zone_id"
   echo ""
+  echo "Example (With Email Notification):"
+  echo "  $0 1.2.3.4 ubuntu pass example.com mail.example.com '' you@email.com cf_api_key zone_id recipient@email.com"
+  echo ""
   echo "Arguments:"
-  echo "  server_ip     - Target server IP address"
-  echo "  ssh_user      - SSH username (usually 'ubuntu' or 'root')"
-  echo "  ssh_password  - SSH password"
-  echo "  domain        - Your domain (e.g., example.com)"
-  echo "  hostname      - Mail server hostname (e.g., mail.example.com)"
-  echo "  db_password   - Optional: Database password (auto-generated if not provided)"
-  echo "  cf_email      - Optional: Cloudflare account email (for auto DNS)"
-  echo "  cf_api_key    - Optional: Cloudflare Global API Key (for auto DNS)"
-  echo "  cf_zone_id    - Optional: Cloudflare Zone ID (for auto DNS)"
+  echo "  server_ip        - Target server IP address"
+  echo "  ssh_user         - SSH username (usually 'ubuntu' or 'root')"
+  echo "  ssh_password     - SSH password"
+  echo "  domain           - Your domain (e.g., example.com)"
+  echo "  hostname         - Mail server hostname (e.g., mail.example.com)"
+  echo "  db_password      - Optional: Database password (auto-generated if not provided)"
+  echo "  cf_email         - Optional: Cloudflare account email (for auto DNS)"
+  echo "  cf_api_key       - Optional: Cloudflare Global API Key (for auto DNS)"
+  echo "  cf_zone_id       - Optional: Cloudflare Zone ID (for auto DNS)"
+  echo "  email_recipient  - Optional: Email address to send deployment documentation"
   echo ""
   echo "Note: If Cloudflare credentials are provided, DNS records will be configured automatically!"
+  echo "Note: If email_recipient is provided, deployment documentation will be sent via email!"
   echo ""
   exit 1
 fi
@@ -386,6 +392,264 @@ if [ $? -eq 0 ]; then
     echo -e "${BLUE}GitHub:${NC}  https://github.com/Ayushjain101/mailserver-deployment"
     echo ""
     echo -e "${GREEN}Your mail server is ready! 🚀${NC}"
+    echo ""
+  fi
+
+  # Send email notification if recipient is provided
+  if [ -n "$EMAIL_RECIPIENT" ]; then
+    echo ""
+    echo -e "${BLUE}Sending deployment documentation via email...${NC}"
+
+    # Create system mailbox for sending notifications
+    SYSTEM_EMAIL="system@$DOMAIN"
+    SYSTEM_PASSWORD="$(openssl rand -base64 16)"
+
+    if [ "$AUTO_DNS" = true ] && [ -n "$API_KEY" ]; then
+      # Use the API key we already have
+      MAILBOX_CREATE=$(sshpass -p "$SSH_PASS" ssh -o StrictHostKeyChecking=no $SSH_USER@$SERVER_IP "curl -s -X POST http://localhost:3000/mailboxes -H 'x-api-key: $API_KEY' -H 'Content-Type: application/json' -d '{\"email\":\"$SYSTEM_EMAIL\",\"password\":\"$SYSTEM_PASSWORD\"}'")
+    else
+      # Generate API key first
+      TEMP_API_RESPONSE=$(sshpass -p "$SSH_PASS" ssh -o StrictHostKeyChecking=no $SSH_USER@$SERVER_IP "curl -s -X POST http://localhost:3000/api-keys -H 'x-api-key: default_key_change_me' -H 'Content-Type: application/json' -d '{\"description\":\"System\"}'")
+      TEMP_API_KEY=$(echo "$TEMP_API_RESPONSE" | grep -o '"apiKey":"[^"]*' | cut -d'"' -f4)
+
+      # Add domain if not already added
+      sshpass -p "$SSH_PASS" ssh -o StrictHostKeyChecking=no $SSH_USER@$SERVER_IP "curl -s -X POST http://localhost:3000/domains -H 'x-api-key: $TEMP_API_KEY' -H 'Content-Type: application/json' -d '{\"domain\":\"$DOMAIN\"}'" > /dev/null 2>&1
+
+      # Create mailbox
+      MAILBOX_CREATE=$(sshpass -p "$SSH_PASS" ssh -o StrictHostKeyChecking=no $SSH_USER@$SERVER_IP "curl -s -X POST http://localhost:3000/mailboxes -H 'x-api-key: $TEMP_API_KEY' -H 'Content-Type: application/json' -d '{\"email\":\"$SYSTEM_EMAIL\",\"password\":\"$SYSTEM_PASSWORD\"}'")
+
+      API_KEY="$TEMP_API_KEY"
+    fi
+
+    # Generate email content
+    if [ "$AUTO_DNS" = true ]; then
+      EMAIL_SUBJECT="✓ Mail Server Deployment Successful - $DOMAIN"
+      EMAIL_BODY="$(cat <<EOF
+Mail Server Deployment - SUCCESS
+
+Your mail server has been successfully deployed with automatic DNS configuration!
+
+========================================
+DEPLOYMENT DETAILS
+========================================
+
+Server Information:
+- Server IP:   $SERVER_IP
+- Domain:      $DOMAIN
+- Hostname:    $HOSTNAME
+- Deployed:    $(date)
+
+API Configuration:
+- API URL:     http://$HOSTNAME/api
+- API Key:     $API_KEY
+
+DNS Records Configured (via Cloudflare):
+✓ A Record:    $HOSTNAME → $SERVER_IP
+✓ MX Record:   $DOMAIN → $HOSTNAME (Priority 10)
+✓ SPF Record:  v=spf1 ip4:$SERVER_IP a:$HOSTNAME ~all
+✓ DKIM Record: mail._domainkey.$DOMAIN
+✓ DMARC Record: v=DMARC1; p=quarantine
+
+========================================
+NEXT STEPS
+========================================
+
+1. Create Your First Mailbox:
+   curl -X POST http://$HOSTNAME/api/mailboxes \\
+     -H "x-api-key: $API_KEY" \\
+     -H "Content-Type: application/json" \\
+     -d '{"email":"admin@$DOMAIN","password":"YourSecurePassword"}'
+
+2. Configure Email Client:
+
+   SMTP (Sending):
+   - Server:     $HOSTNAME
+   - Port:       587 (STARTTLS) or 465 (SSL)
+   - Username:   your-email@$DOMAIN
+   - Password:   your-mailbox-password
+   - Security:   STARTTLS or SSL/TLS
+
+   IMAP (Receiving):
+   - Server:     $HOSTNAME
+   - Port:       143 (STARTTLS) or 993 (SSL)
+   - Username:   your-email@$DOMAIN
+   - Password:   your-mailbox-password
+   - Security:   STARTTLS or SSL/TLS
+
+========================================
+API ENDPOINTS
+========================================
+
+Health Check:
+  GET http://$HOSTNAME/api/health
+
+Manage Domains:
+  GET    http://$HOSTNAME/api/domains
+  POST   http://$HOSTNAME/api/domains
+  DELETE http://$HOSTNAME/api/domains/:domain
+
+Manage Mailboxes:
+  GET    http://$HOSTNAME/api/mailboxes
+  POST   http://$HOSTNAME/api/mailboxes
+  PUT    http://$HOSTNAME/api/mailboxes/:email/password
+  DELETE http://$HOSTNAME/api/mailboxes/:email
+
+Generate API Keys:
+  POST   http://$HOSTNAME/api/api-keys
+
+All requests require header: x-api-key: $API_KEY
+
+========================================
+IMPORTANT NOTES
+========================================
+
+- DNS records have been configured automatically
+- Please allow 5-10 minutes for DNS propagation
+- Save your API key securely
+- Consider setting up SSL/TLS certificates (Let's Encrypt)
+- Configure firewall rules for production use
+- Set up reverse DNS (PTR record) with your hosting provider
+
+========================================
+SUPPORT & DOCUMENTATION
+========================================
+
+GitHub Repository:
+https://github.com/Ayushjain101/mailserver-deployment
+
+Full Documentation:
+https://github.com/Ayushjain101/mailserver-deployment/blob/main/README.md
+
+Your mail server is ready to use! 🚀
+
+---
+This email was sent automatically by the Mail Server Auto-Deploy system.
+EOF
+)"
+    else
+      EMAIL_SUBJECT="✓ Mail Server Deployment Successful - $DOMAIN"
+      EMAIL_BODY="$(cat <<EOF
+Mail Server Deployment - SUCCESS
+
+Your mail server has been successfully deployed!
+
+========================================
+DEPLOYMENT DETAILS
+========================================
+
+Server Information:
+- Server IP:   $SERVER_IP
+- Domain:      $DOMAIN
+- Hostname:    $HOSTNAME
+- Deployed:    $(date)
+
+========================================
+REQUIRED: DNS CONFIGURATION
+========================================
+
+Please add these DNS records in your DNS provider:
+
+A Record:
+  Name:  $HOSTNAME
+  Type:  A
+  Value: $SERVER_IP
+
+MX Record:
+  Name:     $DOMAIN
+  Type:     MX
+  Value:    $HOSTNAME
+  Priority: 10
+
+SPF Record (TXT):
+  Name:  $DOMAIN
+  Type:  TXT
+  Value: v=spf1 ip4:$SERVER_IP a:$HOSTNAME ~all
+
+DMARC Record (TXT):
+  Name:  _dmarc.$DOMAIN
+  Type:  TXT
+  Value: v=DMARC1; p=quarantine; rua=mailto:postmaster@$DOMAIN
+
+========================================
+POST-DNS CONFIGURATION STEPS
+========================================
+
+1. Generate API Key:
+   curl -X POST http://$HOSTNAME/api/api-keys \\
+     -H "x-api-key: default_key_change_me" \\
+     -H "Content-Type: application/json" \\
+     -d '{"description":"Production"}'
+
+2. Add Domain (will generate DKIM):
+   curl -X POST http://$HOSTNAME/api/domains \\
+     -H "x-api-key: YOUR_API_KEY" \\
+     -H "Content-Type: application/json" \\
+     -d '{"domain":"$DOMAIN"}'
+
+3. Add the DKIM TXT record returned from step 2
+
+4. Create Mailbox:
+   curl -X POST http://$HOSTNAME/api/mailboxes \\
+     -H "x-api-key: YOUR_API_KEY" \\
+     -H "Content-Type: application/json" \\
+     -d '{"email":"admin@$DOMAIN","password":"YourPassword"}'
+
+========================================
+EMAIL CLIENT CONFIGURATION
+========================================
+
+SMTP (Sending):
+- Server:   $HOSTNAME
+- Port:     587 (STARTTLS) or 465 (SSL)
+- Security: STARTTLS or SSL/TLS
+
+IMAP (Receiving):
+- Server:   $HOSTNAME
+- Port:     143 (STARTTLS) or 993 (SSL)
+- Security: STARTTLS or SSL/TLS
+
+========================================
+SUPPORT & DOCUMENTATION
+========================================
+
+GitHub: https://github.com/Ayushjain101/mailserver-deployment
+Full Documentation: README.md
+
+Your mail server is ready! 🚀
+
+---
+This email was sent automatically by the Mail Server Auto-Deploy system.
+EOF
+)"
+    fi
+
+    # Send email via the deployed mail server
+    echo -e "${YELLOW}Creating email message...${NC}"
+
+    sshpass -p "$SSH_PASS" ssh -o StrictHostKeyChecking=no $SSH_USER@$SERVER_IP "cat > /tmp/deployment-email.txt <<'EMAILEOF'
+From: Mail Server System <$SYSTEM_EMAIL>
+To: $EMAIL_RECIPIENT
+Subject: $EMAIL_SUBJECT
+Content-Type: text/plain; charset=UTF-8
+
+$EMAIL_BODY
+EMAILEOF"
+
+    # Send via sendmail
+    echo -e "${YELLOW}Sending email to $EMAIL_RECIPIENT...${NC}"
+    SEND_RESULT=$(sshpass -p "$SSH_PASS" ssh -o StrictHostKeyChecking=no $SSH_USER@$SERVER_IP "cat /tmp/deployment-email.txt | sendmail -t && echo 'SUCCESS' || echo 'FAILED'")
+
+    if echo "$SEND_RESULT" | grep -q "SUCCESS"; then
+      echo -e "${GREEN}✓ Deployment documentation sent to $EMAIL_RECIPIENT${NC}"
+      echo -e "${GREEN}  (Note: Email may take a few minutes to arrive)${NC}"
+    else
+      echo -e "${YELLOW}⚠ Email sending encountered issues${NC}"
+      echo -e "${YELLOW}  Documentation has been saved on server at: /tmp/deployment-email.txt${NC}"
+      echo -e "${YELLOW}  Please check your DNS records if email doesn't arrive${NC}"
+    fi
+
+    # Cleanup
+    sshpass -p "$SSH_PASS" ssh -o StrictHostKeyChecking=no $SSH_USER@$SERVER_IP "rm -f /tmp/deployment-email.txt" > /dev/null 2>&1
     echo ""
   fi
 else
