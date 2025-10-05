@@ -242,7 +242,7 @@ Before deployment, review:
 - **Logs:** `/var/log/mail.log`, `journalctl -u <service>`
 - **Config:** `/etc/postfix`, `/etc/dovecot`, `/opt/mailserver-api`
 - **Database:** `mysql mailserver`
-- **API:** `http://localhost:3000/health`
+- **API:** `http://mail.yourdomain.com/api/health`
 
 ---
 

@@ -29,7 +29,7 @@ ssh root@your-server "cd /tmp/mailserver-deployment/scripts && ./install.sh your
 
 ### Step 1: Generate API Key
 ```bash
-curl -X POST http://localhost:3000/api-keys \
+curl -X POST http://mail.yourdomain.com/api/api-keys \
   -H "x-api-key: default_key_change_me" \
   -H "Content-Type: application/json" \
   -d '{"description":"Production"}'
@@ -39,7 +39,7 @@ curl -X POST http://localhost:3000/api-keys \
 
 ### Step 2: Add Domain
 ```bash
-curl -X POST http://localhost:3000/domains \
+curl -X POST http://mail.yourdomain.com/api/domains \
   -H "x-api-key: YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"domain":"yourdomain.com"}'
@@ -61,7 +61,7 @@ Add these records in your DNS provider:
 
 ### Step 4: Create Mailbox
 ```bash
-curl -X POST http://localhost:3000/mailboxes \
+curl -X POST http://mail.yourdomain.com/api/mailboxes \
   -H "x-api-key: YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"email":"admin@yourdomain.com","password":"MailboxPass123"}'

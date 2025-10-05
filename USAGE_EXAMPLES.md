@@ -72,7 +72,7 @@ ansible-playbook -i multi-inventory deploy.yml \
 
 ```bash
 # Step 1: Generate production API key
-curl -X POST http://15.204.242.87:3000/api-keys \
+curl -X POST http://mail.mycompany.com/api/api-keys \
   -H "x-api-key: default_key_change_me" \
   -H "Content-Type: application/json" \
   -d '{"description":"Production API Key"}'
@@ -93,7 +93,7 @@ export MAIL_API_KEY="a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u1v2w3x4y5z6a7b8c9d
 
 ```bash
 # Add domain
-curl -X POST http://15.204.242.87:3000/domains \
+curl -X POST http://mail.mycompany.com/api/domains \
   -H "x-api-key: $MAIL_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"domain":"mycompany.com","dkim_selector":"mail"}'
@@ -112,7 +112,7 @@ curl -X POST http://15.204.242.87:3000/domains \
 }
 
 # Create admin mailbox
-curl -X POST http://15.204.242.87:3000/mailboxes \
+curl -X POST http://mail.mycompany.com/api/mailboxes \
   -H "x-api-key: $MAIL_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -138,7 +138,7 @@ curl -X POST http://15.204.242.87:3000/mailboxes \
 ```bash
 # Create multiple mailboxes for team
 for user in sales support info contact; do
-  curl -X POST http://15.204.242.87:3000/mailboxes \
+  curl -X POST http://mail.mycompany.com/api/mailboxes \
     -H "x-api-key: $MAIL_API_KEY" \
     -H "Content-Type: application/json" \
     -d "{\"email\":\"${user}@mycompany.com\",\"password\":\"TempPass123\",\"quota_mb\":2000}"
@@ -156,7 +156,7 @@ done
 
 ```bash
 # List all domains
-curl http://15.204.242.87:3000/domains \
+curl http://mail.mycompany.com/api/domains \
   -H "x-api-key: $MAIL_API_KEY" | jq .
 
 # Response:
@@ -173,7 +173,7 @@ curl http://15.204.242.87:3000/domains \
 }
 
 # List all mailboxes
-curl http://15.204.242.87:3000/mailboxes \
+curl http://mail.mycompany.com/api/mailboxes \
   -H "x-api-key: $MAIL_API_KEY" | jq .
 
 # Response:
@@ -195,7 +195,7 @@ curl http://15.204.242.87:3000/mailboxes \
 
 ```bash
 # Update password for specific mailbox
-curl -X PUT http://15.204.242.87:3000/mailboxes/admin@mycompany.com/password \
+curl -X PUT http://mail.mycompany.com/api/mailboxes/admin@mycompany.com/password \
   -H "x-api-key: $MAIL_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"password":"NewSecurePassword456!"}'
@@ -211,7 +211,7 @@ curl -X PUT http://15.204.242.87:3000/mailboxes/admin@mycompany.com/password \
 
 ```bash
 # Get DKIM record for domain
-curl http://15.204.242.87:3000/domains/mycompany.com/dkim \
+curl http://mail.mycompany.com/api/domains/mycompany.com/dkim \
   -H "x-api-key: $MAIL_API_KEY" | jq .
 
 # Response:
@@ -469,7 +469,7 @@ EOF
 # Provision all mailboxes
 while IFS=, read -r email password quota_mb; do
   [ "$email" = "email" ] && continue  # Skip header
-  curl -X POST http://15.204.242.87:3000/mailboxes \
+  curl -X POST http://mail.mycompany.com/api/mailboxes \
     -H "x-api-key: $MAIL_API_KEY" \
     -H "Content-Type: application/json" \
     -d "{\"email\":\"$email\",\"password\":\"$password\",\"quota_mb\":$quota_mb}"

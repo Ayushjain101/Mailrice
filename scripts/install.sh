@@ -63,6 +63,7 @@ apt-get install -y \
   opendkim-tools \
   mysql-server \
   python3-pymysql \
+  nginx \
   curl \
   jq > /dev/null 2>&1
 
@@ -328,11 +329,62 @@ Environment=NODE_ENV=production
 WantedBy=multi-user.target
 EOF
 
+# Configure Nginx reverse proxy
+echo -e "${YELLOW}Configuring Nginx...${NC}"
+cat > /etc/nginx/sites-available/mailserver-api << EOF
+# Nginx configuration for Mail Server API
+server {
+    listen 80;
+    server_name $HOSTNAME;
+
+    access_log /var/log/nginx/mailserver-api-access.log;
+    error_log /var/log/nginx/mailserver-api-error.log;
+
+    # API endpoint
+    location /api/ {
+        rewrite ^/api/(.*) /\$1 break;
+        proxy_pass http://127.0.0.1:$API_PORT;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+        proxy_buffering off;
+    }
+
+    # Health check endpoint
+    location /health {
+        proxy_pass http://127.0.0.1:$API_PORT/health;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        access_log off;
+    }
+
+    # Security headers
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+}
+EOF
+
+# Enable Nginx site
+ln -sf /etc/nginx/sites-available/mailserver-api /etc/nginx/sites-enabled/mailserver-api
+rm -f /etc/nginx/sites-enabled/default
+
+# Test Nginx configuration
+nginx -t > /dev/null 2>&1 || {
+    echo -e "${RED}Nginx configuration test failed${NC}"
+    exit 1
+}
+
 # Enable and start services
 echo -e "${YELLOW}Starting services...${NC}"
 systemctl daemon-reload
-systemctl enable postfix dovecot mailserver-api > /dev/null 2>&1
-systemctl restart postfix dovecot mailserver-api
+systemctl enable postfix dovecot mailserver-api nginx > /dev/null 2>&1
+systemctl restart postfix dovecot mailserver-api nginx
 
 # Wait for services to start
 sleep 2
@@ -346,6 +398,7 @@ echo -e "\n${YELLOW}Service Status:${NC}"
 systemctl is-active --quiet postfix && echo -e "Postfix:        ${GREEN}✓ Running${NC}" || echo -e "Postfix:        ${RED}✗ Failed${NC}"
 systemctl is-active --quiet dovecot && echo -e "Dovecot:        ${GREEN}✓ Running${NC}" || echo -e "Dovecot:        ${RED}✗ Failed${NC}"
 systemctl is-active --quiet mailserver-api && echo -e "API:            ${GREEN}✓ Running${NC}" || echo -e "API:            ${RED}✗ Failed${NC}"
+systemctl is-active --quiet nginx && echo -e "Nginx:          ${GREEN}✓ Running${NC}" || echo -e "Nginx:          ${RED}✗ Failed${NC}"
 
 # Get server IP
 SERVER_IP=$(hostname -I | awk '{print $1}')
@@ -353,20 +406,25 @@ SERVER_IP=$(hostname -I | awk '{print $1}')
 echo -e "\n${YELLOW}Configuration:${NC}"
 echo -e "Domain:         $DOMAIN"
 echo -e "Hostname:       $HOSTNAME"
-echo -e "API URL:        http://$SERVER_IP:$API_PORT"
+echo -e "Server IP:      $SERVER_IP"
+echo -e "API URL:        http://$HOSTNAME/api"
 echo -e "Database:       $DB_NAME"
 echo -e "DB User:        $DB_USER"
 
 echo -e "\n${YELLOW}Next Steps:${NC}"
-echo "1. Generate API key:"
-echo "   curl -X POST http://localhost:$API_PORT/api-keys -H 'x-api-key: default_key_change_me' -H 'Content-Type: application/json' -d '{\"description\":\"Production Key\"}'"
+echo "1. Configure DNS: Add A record for $HOSTNAME → $SERVER_IP"
 echo ""
-echo "2. Add your domain:"
-echo "   curl -X POST http://localhost:$API_PORT/domains -H 'x-api-key: YOUR_API_KEY' -H 'Content-Type: application/json' -d '{\"domain\":\"$DOMAIN\"}'"
+echo "2. Generate API key:"
+echo "   curl -X POST http://$HOSTNAME/api/api-keys -H 'x-api-key: default_key_change_me' -H 'Content-Type: application/json' -d '{\"description\":\"Production Key\"}'"
 echo ""
-echo "3. Create mailbox:"
-echo "   curl -X POST http://localhost:$API_PORT/mailboxes -H 'x-api-key: YOUR_API_KEY' -H 'Content-Type: application/json' -d '{\"email\":\"user@$DOMAIN\",\"password\":\"password123\"}'"
+echo "3. Add your domain:"
+echo "   curl -X POST http://$HOSTNAME/api/domains -H 'x-api-key: YOUR_API_KEY' -H 'Content-Type: application/json' -d '{\"domain\":\"$DOMAIN\"}'"
 echo ""
-echo "4. Configure DNS records (A, MX, SPF, DKIM, DMARC)"
+echo "4. Create mailbox:"
+echo "   curl -X POST http://$HOSTNAME/api/mailboxes -H 'x-api-key: YOUR_API_KEY' -H 'Content-Type: application/json' -d '{\"email\":\"user@$DOMAIN\",\"password\":\"password123\"}'"
+echo ""
+echo "5. Configure remaining DNS records (MX, SPF, DKIM, DMARC)"
+echo ""
+echo "6. Optional: Install SSL certificate with certbot for HTTPS"
 echo ""
 echo -e "${GREEN}========================================${NC}"

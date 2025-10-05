@@ -84,7 +84,7 @@ The script will prompt for:
 The default API key is `default_key_change_me`. Generate a secure one:
 
 ```bash
-curl -X POST http://localhost:3000/api-keys \
+curl -X POST http://mail.yourdomain.com/api/api-keys \
   -H "x-api-key: default_key_change_me" \
   -H "Content-Type: application/json" \
   -d '{"description":"Production Key"}'
@@ -95,7 +95,7 @@ Save the returned API key securely.
 ### 2. Add Your Domain
 
 ```bash
-curl -X POST http://localhost:3000/domains \
+curl -X POST http://mail.yourdomain.com/api/domains \
   -H "x-api-key: YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"domain":"yourdomain.com"}'
@@ -136,7 +136,7 @@ _dmarc.yourdomain.com → v=DMARC1; p=quarantine; rua=mailto:postmaster@yourdoma
 ### 4. Create Mailboxes
 
 ```bash
-curl -X POST http://localhost:3000/mailboxes \
+curl -X POST http://mail.yourdomain.com/api/mailboxes \
   -H "x-api-key: YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"email":"user@yourdomain.com","password":"SecurePassword123","quota_mb":1000}'
@@ -448,7 +448,7 @@ sudo journalctl -u mailserver-api -f
 
 2. Verify API is running:
 ```bash
-curl http://localhost:3000/health -H "x-api-key: YOUR_API_KEY"
+curl http://mail.yourdomain.com/api/health -H "x-api-key: YOUR_API_KEY"
 ```
 
 3. Check database connection:

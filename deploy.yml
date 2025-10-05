@@ -36,6 +36,7 @@
           - opendkim-tools
           - mysql-server
           - python3-pymysql
+          - nginx
           - curl
           - jq
         state: present
@@ -69,6 +70,11 @@
         priv: "{{ db_name }}.*:ALL"
         state: present
         login_unix_socket: /var/run/mysqld/mysqld.sock
+
+    - name: Copy database schema
+      copy:
+        src: templates/schema.sql
+        dest: /tmp/schema.sql
 
     - name: Create database schema
       mysql_db:
@@ -199,6 +205,25 @@
         dest: /etc/systemd/system/mailserver-api.service
       notify: restart mailserver-api
 
+    - name: Configure Nginx reverse proxy for API
+      template:
+        src: templates/nginx-api.conf.j2
+        dest: /etc/nginx/sites-available/mailserver-api
+      notify: restart nginx
+
+    - name: Enable Nginx site
+      file:
+        src: /etc/nginx/sites-available/mailserver-api
+        dest: /etc/nginx/sites-enabled/mailserver-api
+        state: link
+      notify: restart nginx
+
+    - name: Remove default Nginx site
+      file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+      notify: restart nginx
+
     - name: Enable and start services
       systemd:
         name: "{{ item }}"
@@ -209,6 +234,7 @@
         - postfix
         - dovecot
         - mailserver-api
+        - nginx
 
     - name: Display completion message
       debug:
@@ -218,16 +244,18 @@
           ========================================
           Domain: {{ domain }}
           Hostname: {{ hostname }}
-          API URL: http://{{ ansible_default_ipv4.address }}:{{ api_port }}
+          API URL: http://{{ hostname }}/api
+          Server IP: {{ ansible_default_ipv4.address }}
           Database: {{ db_name }}
           DB User: {{ db_user }}
           DB Password: {{ db_password }}
 
           Next Steps:
-          1. Configure DNS records for {{ domain }}
-          2. Generate first API key
+          1. Configure DNS: Add A record for {{ hostname }} → {{ ansible_default_ipv4.address }}
+          2. Generate API key: curl -X POST http://{{ hostname }}/api/api-keys -H "x-api-key: default_key_change_me" -H "Content-Type: application/json" -d '{"description":"Production"}'
           3. Add domain via API
           4. Create mailboxes
+          5. Optional: Install SSL certificate with certbot for HTTPS
           ========================================
 
   handlers:
@@ -244,4 +272,9 @@
     - name: restart mailserver-api
       systemd:
         name: mailserver-api
+        state: restarted
+
+    - name: restart nginx
+      systemd:
+        name: nginx
         state: restarted
