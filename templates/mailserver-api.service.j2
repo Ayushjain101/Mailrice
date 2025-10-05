@@ -17,10 +17,10 @@ Restart=always
 RestartSec=10
 Environment=NODE_ENV=production
 
-# Security hardening
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectSystem=strict
+# Security hardening (relaxed for sudo access)
+NoNewPrivileges=false
+PrivateTmp=false
+ProtectSystem=no
 ProtectHome=true
 ReadWritePaths=/var/vmail /etc/opendkim
 ReadOnlyPaths=/etc/postfix /etc/dovecot

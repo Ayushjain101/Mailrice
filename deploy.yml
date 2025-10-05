@@ -22,8 +22,14 @@
       register: db_password_file
 
     - name: Load existing database password
+      command: cat /root/.db_password
+      register: existing_password
+      when: db_password_file.stat.exists
+      changed_when: false
+
+    - name: Set existing database password as fact
       set_fact:
-        db_password: "{{ lookup('file', '/root/.db_password') }}"
+        db_password: "{{ existing_password.stdout }}"
       when: db_password_file.stat.exists
 
     - name: Generate new database password only if needed
@@ -236,7 +242,7 @@
         dest: /etc/sudoers.d/mailserver-api
         mode: '0440'
         content: |
-          Defaults:mailapi !requiretty
+          mailapi ALL=(ALL) NOPASSWD: /usr/sbin/opendkim-genkey
           mailapi ALL=(ALL) NOPASSWD: /usr/bin/opendkim-genkey
           mailapi ALL=(ALL) NOPASSWD: /bin/systemctl reload opendkim
           mailapi ALL=(ALL) NOPASSWD: /bin/systemctl restart opendkim

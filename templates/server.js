@@ -301,6 +301,7 @@ async function generateDKIMKeys(domain, selector = 'mail') {
 
     // Generate DKIM key using spawn (no shell injection)
     // Note: opendkim-genkey requires sudo (configured in sudoers)
+    // The sudo command will set appropriate permissions automatically
     await spawnAsync('sudo', [
       'opendkim-genkey',
       '-b', '2048',
@@ -310,8 +311,8 @@ async function generateDKIMKeys(domain, selector = 'mail') {
       '-v'
     ]);
 
-    // Set permissions using fs.chmod
-    await fs.chmod(privateKeyPath, 0o600);
+    // Note: opendkim-genkey sets proper permissions (600) on private key automatically
+    // No need to chmod as it's already done by the tool
 
     // Read keys using Node.js fs (mailapi user is in opendkim group)
     const privateKey = await fs.readFile(privateKeyPath, 'utf8');
