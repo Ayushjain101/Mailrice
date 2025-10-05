@@ -11,12 +11,14 @@
     hostname: "{{ hostname }}"
     db_name: mailserver
     db_user: mailuser
-    db_password: "{{ lookup('env', 'DB_PASSWORD') | default('SecureMailPass' + lookup('password', '/dev/null length=15 chars=ascii_letters,digits'), true) }}"
     api_port: 3000
     vmail_uid: 5000
     vmail_gid: 5000
 
   tasks:
+    - name: Generate and set database password once
+      set_fact:
+        db_password: "{{ db_password | default(lookup('env', 'DB_PASSWORD') | default('SecureMailPass' + lookup('password', '/dev/null length=15 chars=ascii_letters,digits'), true)) }}"
     - name: Update apt cache
       apt:
         update_cache: yes
@@ -70,11 +72,10 @@
         login_unix_socket: /var/run/mysqld/mysqld.sock
 
     - name: Create MySQL user and set password
-      shell: |
-        # Create user if doesn't exist, or alter password if exists
-        mysql -e "CREATE USER IF NOT EXISTS '{{ db_user }}'@'localhost';"
-        mysql -e "ALTER USER '{{ db_user }}'@'localhost' IDENTIFIED BY '{{ db_password }}';"
-        mysql -e "GRANT ALL PRIVILEGES ON {{ db_name }}.* TO '{{ db_user }}'@'localhost';"
+      shell: >
+        mysql -e "CREATE USER IF NOT EXISTS '{{ db_user }}'@'localhost';" &&
+        mysql -e "ALTER USER '{{ db_user }}'@'localhost' IDENTIFIED BY '{{ db_password }}';" &&
+        mysql -e "GRANT ALL PRIVILEGES ON {{ db_name }}.* TO '{{ db_user }}'@'localhost';" &&
         mysql -e "FLUSH PRIVILEGES;"
       args:
         executable: /bin/bash
