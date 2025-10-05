@@ -19,6 +19,15 @@
     - name: Generate and set database password once
       set_fact:
         db_password: "{{ db_password | default(lookup('env', 'DB_PASSWORD') | default('SecureMailPass' + lookup('password', '/dev/null length=15 chars=ascii_letters,digits'), true)) }}"
+
+    - name: Generate secure API key
+      set_fact:
+        initial_api_key: "{{ lookup('password', '/dev/null length=64 chars=ascii_letters,digits') }}"
+
+    - name: Generate secure master API key
+      set_fact:
+        master_api_key: "{{ lookup('password', '/dev/null length=64 chars=ascii_letters,digits') }}"
+
     - name: Update apt cache
       apt:
         update_cache: yes
@@ -93,6 +102,13 @@
         state: import
         target: /tmp/schema.sql
         login_unix_socket: /var/run/mysqld/mysqld.sock
+
+    - name: Insert initial API key into database
+      shell: |
+        mysql {{ db_name }} -e "DELETE FROM api_keys WHERE description LIKE 'Default%' OR description = 'Initial API Key';" || true
+        mysql {{ db_name }} -e "INSERT INTO api_keys (api_key, description) VALUES ('{{ initial_api_key }}', 'Initial API Key - Generated on deployment');"
+      args:
+        executable: /bin/bash
 
     - name: Configure Postfix main.cf
       template:
@@ -186,6 +202,28 @@
           }
       notify: restart dovecot
 
+    - name: Create mailapi system user
+      user:
+        name: mailapi
+        system: yes
+        create_home: no
+        shell: /usr/sbin/nologin
+        groups:
+          - vmail
+          - opendkim
+        append: yes
+
+    - name: Configure sudoers for mailapi
+      copy:
+        dest: /etc/sudoers.d/mailserver-api
+        mode: '0440'
+        content: |
+          Defaults:mailapi !requiretty
+          mailapi ALL=(ALL) NOPASSWD: /usr/bin/opendkim-genkey
+          mailapi ALL=(ALL) NOPASSWD: /bin/systemctl reload opendkim
+          mailapi ALL=(ALL) NOPASSWD: /bin/systemctl restart opendkim
+        validate: 'visudo -cf %s'
+
     - name: Create API directory
       file:
         path: /opt/mailserver-api
@@ -209,6 +247,23 @@
       npm:
         path: /opt/mailserver-api
         state: present
+
+    - name: Set API directory ownership
+      file:
+        path: /opt/mailserver-api
+        owner: mailapi
+        group: mailapi
+        recurse: yes
+
+    - name: Ensure OpenDKIM config files are writable by mailapi
+      file:
+        path: "{{ item }}"
+        owner: opendkim
+        group: opendkim
+        mode: '0664'
+      loop:
+        - /etc/opendkim/KeyTable
+        - /etc/opendkim/SigningTable
 
     - name: Create systemd service for API
       template:
@@ -304,6 +359,22 @@
         - mailserver-api
         - nginx
 
+    - name: Save API credentials to file
+      copy:
+        dest: /root/.mailserver_credentials
+        mode: '0600'
+        content: |
+          ========================================
+          Mailrice Server Credentials
+          ========================================
+          Generated: {{ ansible_date_time.iso8601 }}
+
+          Initial API Key: {{ initial_api_key }}
+          Master API Key: {{ master_api_key }}
+          Database Password: {{ db_password }}
+
+          ========================================
+
     - name: Display completion message
       debug:
         msg: |
@@ -312,18 +383,25 @@
           ========================================
           Domain: {{ domain }}
           Hostname: {{ hostname }}
-          API URL: http://{{ hostname }}/api
+          API URL: http://{{ ansible_default_ipv4.address }}:{{ api_port }}
           Server IP: {{ ansible_default_ipv4.address }}
-          Database: {{ db_name }}
-          DB User: {{ db_user }}
+
+          CREDENTIALS (saved to /root/.mailserver_credentials):
+          ========================================
+          Initial API Key: {{ initial_api_key }}
+          Master API Key: {{ master_api_key }}
           DB Password: {{ db_password }}
+          ========================================
 
           Next Steps:
           1. Configure DNS: Add A record for {{ hostname }} → {{ ansible_default_ipv4.address }}
-          2. Generate API key: curl -X POST http://{{ hostname }}/api/api-keys -H "x-api-key: default_key_change_me" -H "Content-Type: application/json" -d '{"description":"Production"}'
-          3. Add domain via API
-          4. Create mailboxes
-          5. Optional: Install SSL certificate with certbot for HTTPS
+          2. Test API: curl http://{{ ansible_default_ipv4.address }}:{{ api_port }}/health
+          3. Add domain: curl -X POST http://{{ ansible_default_ipv4.address }}:{{ api_port }}/domains -H "x-api-key: {{ initial_api_key }}" -H "Content-Type: application/json" -d '{"domain":"yourdomain.com"}'
+          4. Create mailbox: curl -X POST http://{{ ansible_default_ipv4.address }}:{{ api_port }}/mailboxes -H "x-api-key: {{ initial_api_key }}" -H "Content-Type: application/json" -d '{"email":"user@yourdomain.com","password":"YourSecurePassword123!"}'
+          5. Configure SSL with certbot
+
+          To create additional API keys:
+          curl -X POST http://{{ ansible_default_ipv4.address }}:{{ api_port }}/api-keys -H "Content-Type: application/json" -d '{"master_key":"{{ master_api_key }}","description":"My API Key"}'
           ========================================
 
   handlers:

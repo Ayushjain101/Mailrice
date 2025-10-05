@@ -1,8 +1,8 @@
 driver = mysql
 connect = host=127.0.0.1 dbname={{ db_name }} user={{ db_user }} password={{ db_password }}
 
-# Password scheme - using PLAIN for compatibility
-default_pass_scheme = PLAIN
+# Password scheme - using SHA512-CRYPT (matches API hash generation)
+default_pass_scheme = SHA512-CRYPT
 
 # Password query
 password_query = SELECT email as user, password FROM virtual_users WHERE email='%u'

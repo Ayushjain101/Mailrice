@@ -46,6 +46,18 @@ async function isPathSafe(basePath, targetPath) {
   }
 }
 
+// Validate password strength
+function isStrongPassword(password) {
+  if (!password || password.length < 12) return false;
+
+  const hasUpperCase = /[A-Z]/.test(password);
+  const hasLowerCase = /[a-z]/.test(password);
+  const hasNumber = /[0-9]/.test(password);
+  const hasSpecial = /[!@#$%^&*(),.?":{}|<>_\-+=\[\]\\/'`~]/.test(password);
+
+  return hasUpperCase && hasLowerCase && hasNumber && hasSpecial;
+}
+
 // ==================== SECURITY: SAFE COMMAND EXECUTION ====================
 
 // Execute command without shell (prevents injection)
@@ -175,7 +187,40 @@ async function validateApiKey(req, res, next) {
   }
 }
 
-// Apply rate limiters
+// Health check endpoint (no auth required for monitoring)
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// API key creation endpoint (uses master key, not API key)
+app.post('/api-keys', authLimiter, async (req, res) => {
+  const { description = 'API Key', master_key } = req.body;
+
+  // Require master key from environment
+  if (!process.env.MASTER_API_KEY || master_key !== process.env.MASTER_API_KEY) {
+    return res.status(403).json({ error: 'Invalid master key' });
+  }
+
+  try {
+    const apiKey = crypto.randomBytes(32).toString('hex');
+
+    const [result] = await pool.execute(
+      'INSERT INTO api_keys (api_key, description) VALUES (?, ?)',
+      [apiKey, description]
+    );
+
+    res.status(201).json({
+      success: true,
+      api_key: apiKey,
+      description: description,
+      message: 'API key created. Store it securely - it cannot be retrieved later.'
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Apply rate limiters and authentication to all other routes
 app.use(authLimiter); // Auth rate limit applies to all routes
 app.use(validateApiKey); // API key validation
 app.use(generalLimiter); // General rate limit applies after successful auth
@@ -232,11 +277,6 @@ async function generateDKIMKeys(domain, selector = 'mail') {
     throw new Error(`Failed to generate DKIM keys: ${error.message}`);
   }
 }
-
-// Health check
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
-});
 
 // ==================== DOMAIN ENDPOINTS ====================
 
@@ -408,8 +448,10 @@ app.post('/mailboxes', strictLimiter, async (req, res) => {
     return res.status(400).json({ error: 'Invalid email address' });
   }
 
-  if (!password || password.length < 8) {
-    return res.status(400).json({ error: 'Password must be at least 8 characters' });
+  if (!isStrongPassword(password)) {
+    return res.status(400).json({
+      error: 'Password must be at least 12 characters with uppercase, lowercase, number, and special character (!@#$%^&* etc.)'
+    });
   }
 
   if (typeof quota_mb !== 'number' || quota_mb < 1 || quota_mb > 100000) {
@@ -478,8 +520,10 @@ app.post('/mailboxes', strictLimiter, async (req, res) => {
 app.put('/mailboxes/:email/password', async (req, res) => {
   const { password } = req.body;
 
-  if (!password) {
-    return res.status(400).json({ error: 'Password required' });
+  if (!isStrongPassword(password)) {
+    return res.status(400).json({
+      error: 'Password must be at least 12 characters with uppercase, lowercase, number, and special character (!@#$%^&* etc.)'
+    });
   }
 
   try {
@@ -530,34 +574,53 @@ app.delete('/mailboxes/:email', async (req, res) => {
   }
 });
 
-// ==================== API KEY MANAGEMENT ====================
-
-// Generate new API key
-app.post('/api-keys', async (req, res) => {
-  const { description = 'API Key' } = req.body;
-
+// Test database connection on startup
+async function testDatabaseConnection() {
   try {
-    const apiKey = require('crypto').randomBytes(32).toString('hex');
-
-    const [result] = await pool.execute(
-      'INSERT INTO api_keys (api_key, description) VALUES (?, ?)',
-      [apiKey, description]
-    );
-
-    res.status(201).json({
-      success: true,
-      api_key: apiKey,
-      description: description,
-      message: 'API key created. Store it securely - it cannot be retrieved later.'
-    });
+    console.log('Testing database connection...');
+    const connection = await pool.getConnection();
+    await connection.ping();
+    connection.release();
+    console.log('✓ Database connection successful');
+    return true;
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error('✗ Database connection failed:', error.message);
+    console.error('Please check DB_HOST, DB_USER, DB_PASSWORD, DB_NAME in .env file');
+    process.exit(1);
+  }
+}
+
+// Handle database pool errors
+pool.on('error', (err) => {
+  console.error('Database pool error:', err);
+  if (err.code === 'PROTOCOL_CONNECTION_LOST') {
+    console.error('Database connection lost. Attempting to reconnect...');
   }
 });
 
-// Start server
+// Graceful shutdown
+process.on('SIGTERM', async () => {
+  console.log('SIGTERM received. Closing server gracefully...');
+  await pool.end();
+  process.exit(0);
+});
+
+process.on('SIGINT', async () => {
+  console.log('SIGINT received. Closing server gracefully...');
+  await pool.end();
+  process.exit(0);
+});
+
+// Start server after database connection test
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Mail Server API running on port ${PORT}`);
-  console.log(`Health check: http://localhost:${PORT}/health`);
+
+testDatabaseConnection().then(() => {
+  app.listen(PORT, () => {
+    console.log(`✓ Mail Server API running on port ${PORT}`);
+    console.log(`✓ Health check: http://localhost:${PORT}/health`);
+    console.log(`✓ API ready to accept requests`);
+  });
+}).catch((error) => {
+  console.error('Failed to start server:', error);
+  process.exit(1);
 });
