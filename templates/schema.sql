@@ -37,7 +37,6 @@ CREATE TABLE IF NOT EXISTS virtual_aliases (
   FOREIGN KEY (domain_id) REFERENCES virtual_domains(id) ON DELETE CASCADE,
   UNIQUE KEY unique_source (source),
   INDEX idx_source (source),
-  INDEX idx_destination (destination),
   INDEX idx_domain_id (domain_id),
   INDEX idx_created_at (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

@@ -7,6 +7,7 @@ const fs = require('fs').promises;
 const path = require('path');
 const rateLimit = require('express-rate-limit');
 const morgan = require('morgan');
+const lockFile = require('proper-lockfile');
 require('dotenv').config();
 
 // ==================== ENVIRONMENT VALIDATION ====================
@@ -52,10 +53,18 @@ const VMAIL_GID = parseInt(process.env.VMAIL_GID) || 5000;
 
 // ==================== SECURITY: INPUT VALIDATION ====================
 
-// Validate email address (RFC 5322 compliant)
+// Validate email address (RFC 5322 compliant with security hardening)
 function isValidEmail(email) {
   if (!email || typeof email !== 'string') return false;
-  const emailRegex = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
+
+  // Explicitly reject path traversal and dangerous characters
+  if (email.includes('/') || email.includes('\\') ||
+      email.includes('..') || email.includes('\0')) {
+    return false;
+  }
+
+  // Remove / from allowed characters for security
+  const emailRegex = /^[a-zA-Z0-9.!#$%&'*+=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
   return emailRegex.test(email) && email.length <= 254;
 }
 
@@ -135,18 +144,26 @@ function generateSHA512Password(password) {
     let stdout = '';
     let stderr = '';
 
-    proc.stdout.on('data', (data) => stdout += data);
-    proc.stderr.on('data', (data) => stderr += data);
-
-    proc.on('close', (code) => {
-      if (code === 0) {
-        resolve(stdout.trim());
-      } else {
-        reject(new Error(`Password generation failed: ${stderr}`));
-      }
-    });
+    proc.stdout.on('data', (data) => stdout += data.toString());
+    proc.stderr.on('data', (data) => stderr += data.toString());
 
     proc.on('error', reject);
+
+    proc.on('close', (code) => {
+      // Wait for next tick to ensure all data events are processed
+      setImmediate(() => {
+        if (code === 0) {
+          const hash = stdout.trim();
+          if (!hash || hash.length < 20) {
+            reject(new Error('Invalid password hash generated'));
+          } else {
+            resolve(hash);
+          }
+        } else {
+          reject(new Error(`Password generation failed: ${stderr}`));
+        }
+      });
+    });
   });
 }
 const app = express();
@@ -223,8 +240,11 @@ async function validateApiKey(req, res, next) {
       return res.status(403).json({ error: 'Invalid API key' });
     }
 
-    // Update last_used_at timestamp (fire and forget, don't wait)
-    pool.execute('UPDATE api_keys SET last_used_at = NOW() WHERE id = ?', [rows[0].id]).catch(() => {});
+    // Update last_used_at timestamp (fire and forget, but log errors)
+    pool.execute('UPDATE api_keys SET last_used_at = NOW() WHERE id = ?', [rows[0].id])
+      .catch((err) => {
+        console.error('Failed to update API key last_used_at:', err.message);
+      });
 
     next();
   } catch (error) {
@@ -237,7 +257,7 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// API key creation endpoint (uses master key, not API key)
+// API key creation endpoint (uses master key, not API key) with auth limiter
 app.post('/api-keys', authLimiter, async (req, res) => {
   const { description = 'API Key', master_key } = req.body;
 
@@ -265,9 +285,8 @@ app.post('/api-keys', authLimiter, async (req, res) => {
   }
 });
 
-// Apply rate limiters and authentication to all other routes
-app.use(authLimiter); // Auth rate limit applies to all routes
-app.use(validateApiKey); // API key validation
+// Apply authentication and rate limiting to all other routes
+app.use(validateApiKey); // API key validation (removed global auth limiter)
 app.use(generalLimiter); // General rate limit applies after successful auth
 
 // Helper function to generate DKIM keys
@@ -302,15 +321,39 @@ async function generateDKIMKeys(domain, selector = 'mail') {
     const publicKeyMatch = publicKeyRaw.match(/p=([^"]+)/);
     const publicKey = publicKeyMatch ? publicKeyMatch[1].replace(/\s/g, '') : '';
 
-    // Update KeyTable and SigningTable using Node.js fs
+    // Update KeyTable and SigningTable with file locking to prevent corruption
     const keyTableEntry = `${selector}._domainkey.${domain} ${domain}:${selector}:${privateKeyPath}\n`;
     const signingTableEntry = `*@${domain} ${selector}._domainkey.${domain}\n`;
 
-    await fs.appendFile('/etc/opendkim/KeyTable', keyTableEntry);
-    await fs.appendFile('/etc/opendkim/SigningTable', signingTableEntry);
+    // Lock and update KeyTable
+    const keyTableRelease = await lockFile.lock('/etc/opendkim/KeyTable', {
+      retries: { retries: 10, minTimeout: 100, maxTimeout: 1000 }
+    });
 
-    // Reload OpenDKIM using spawn (allowed in sudoers)
-    await spawnAsync('sudo', ['systemctl', 'reload', 'opendkim']);
+    try {
+      await fs.appendFile('/etc/opendkim/KeyTable', keyTableEntry);
+    } finally {
+      await keyTableRelease();
+    }
+
+    // Lock and update SigningTable
+    const signingTableRelease = await lockFile.lock('/etc/opendkim/SigningTable', {
+      retries: { retries: 10, minTimeout: 100, maxTimeout: 1000 }
+    });
+
+    try {
+      await fs.appendFile('/etc/opendkim/SigningTable', signingTableEntry);
+    } finally {
+      await signingTableRelease();
+    }
+
+    // Reload OpenDKIM using spawn (allowed in sudoers) - log errors but don't fail
+    try {
+      await spawnAsync('sudo', ['systemctl', 'reload', 'opendkim']);
+    } catch (reloadError) {
+      console.error(`OpenDKIM reload failed for domain ${domain}:`, reloadError.message);
+      // Log but don't fail - domain was created successfully, admin can manually reload
+    }
 
     return {
       privateKey: privateKey.trim(),
@@ -394,10 +437,19 @@ app.post('/domains', strictLimiter, async (req, res) => {
     return res.status(400).json({ error: 'Invalid DKIM selector' });
   }
 
+  let connection;
   try {
-    // Check if domain already exists
-    const [existing] = await pool.execute('SELECT id FROM virtual_domains WHERE name = ?', [domain]);
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+
+    // Check if domain already exists with SELECT FOR UPDATE to prevent race condition
+    const [existing] = await connection.execute(
+      'SELECT id FROM virtual_domains WHERE name = ? FOR UPDATE',
+      [domain]
+    );
+
     if (existing.length > 0) {
+      await connection.rollback();
       return res.status(409).json({ error: 'Domain already exists' });
     }
 
@@ -405,10 +457,12 @@ app.post('/domains', strictLimiter, async (req, res) => {
     const dkimKeys = await generateDKIMKeys(domain, dkim_selector);
 
     // Insert domain into database
-    const [result] = await pool.execute(
+    const [result] = await connection.execute(
       'INSERT INTO virtual_domains (name, dkim_selector, dkim_private_key, dkim_public_key) VALUES (?, ?, ?, ?)',
       [domain, dkim_selector, dkimKeys.privateKey, dkimKeys.publicKey]
     );
+
+    await connection.commit();
 
     res.status(201).json({
       success: true,
@@ -422,7 +476,20 @@ app.post('/domains', strictLimiter, async (req, res) => {
       message: 'Domain added successfully. Add the DKIM DNS record to your DNS provider.'
     });
   } catch (error) {
+    if (connection) await connection.rollback();
+
+    // Clean up orphaned DKIM files on failure
+    const dkimDir = path.join('/etc/opendkim/keys', domain);
+    if (await isPathSafe('/etc/opendkim/keys', dkimDir)) {
+      await fs.rm(dkimDir, { recursive: true, force: true }).catch(() => {});
+    }
+
+    if (error.code === 'ER_DUP_ENTRY') {
+      return res.status(409).json({ error: 'Domain already exists' });
+    }
     res.status(500).json({ error: error.message });
+  } finally {
+    if (connection) connection.release();
   }
 });
 
@@ -433,18 +500,32 @@ app.delete('/domains/:domain', async (req, res) => {
     return res.status(400).json({ error: 'Invalid domain name' });
   }
 
+  let connection;
   try {
-    // Check for existing mailboxes
-    const [domainRows] = await pool.execute('SELECT id FROM virtual_domains WHERE name = ?', [req.params.domain]);
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+
+    // Lock domain row with FOR UPDATE to prevent race conditions
+    const [domainRows] = await connection.execute(
+      'SELECT id FROM virtual_domains WHERE name = ? FOR UPDATE',
+      [req.params.domain]
+    );
 
     if (domainRows.length === 0) {
+      await connection.rollback();
       return res.status(404).json({ error: 'Domain not found' });
     }
 
     const domainId = domainRows[0].id;
-    const [mailboxes] = await pool.execute('SELECT COUNT(*) as count FROM virtual_users WHERE domain_id = ?', [domainId]);
+
+    // Lock mailbox count check with FOR UPDATE
+    const [mailboxes] = await connection.execute(
+      'SELECT COUNT(*) as count FROM virtual_users WHERE domain_id = ? FOR UPDATE',
+      [domainId]
+    );
 
     if (mailboxes[0].count > 0) {
+      await connection.rollback();
       return res.status(409).json({
         error: 'Cannot delete domain with existing mailboxes',
         mailbox_count: mailboxes[0].count,
@@ -452,13 +533,15 @@ app.delete('/domains/:domain', async (req, res) => {
       });
     }
 
-    const [result] = await pool.execute('DELETE FROM virtual_domains WHERE name = ?', [req.params.domain]);
+    const [result] = await connection.execute('DELETE FROM virtual_domains WHERE name = ?', [req.params.domain]);
+
+    await connection.commit();
 
     if (result.affectedRows === 0) {
       return res.status(404).json({ error: 'Domain not found' });
     }
 
-    // Clean up DKIM files using Node.js fs
+    // Clean up DKIM files after successful deletion
     const dkimDir = path.join('/etc/opendkim/keys', req.params.domain);
 
     // Validate path safety before deletion
@@ -468,7 +551,10 @@ app.delete('/domains/:domain', async (req, res) => {
 
     res.json({ success: true, message: 'Domain deleted successfully' });
   } catch (error) {
+    if (connection) await connection.rollback();
     res.status(500).json({ error: error.message });
+  } finally {
+    if (connection) connection.release();
   }
 });
 
@@ -577,10 +663,19 @@ app.post('/mailboxes', strictLimiter, async (req, res) => {
   const domain = email.split('@')[1];
   const username = email.split('@')[0];
 
+  let connection;
   try {
-    // Check if domain exists
-    const [domainRows] = await pool.execute('SELECT id FROM virtual_domains WHERE name = ?', [domain]);
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+
+    // Lock domain row to prevent it from being deleted during mailbox creation
+    const [domainRows] = await connection.execute(
+      'SELECT id FROM virtual_domains WHERE name = ? FOR UPDATE',
+      [domain]
+    );
+
     if (domainRows.length === 0) {
+      await connection.rollback();
       return res.status(404).json({ error: 'Domain not found. Please add the domain first.' });
     }
 
@@ -589,17 +684,12 @@ app.post('/mailboxes', strictLimiter, async (req, res) => {
     // Hash password with SHA512-CRYPT for Dovecot
     const hashedPassword = await generateSHA512Password(password);
 
-    // Insert mailbox
-    const [result] = await pool.execute(
-      'INSERT INTO virtual_users (domain_id, email, password, quota_mb) VALUES (?, ?, ?, ?)',
-      [domainId, email, hashedPassword, quota_mb]
-    );
-
-    // Create maildir using Node.js fs (no sudo needed)
+    // Create maildir first before database insert
     const maildir = path.join('/var/vmail', domain, username);
 
     // Validate path safety
     if (!await isPathSafe('/var/vmail', maildir)) {
+      await connection.rollback();
       throw new Error('Invalid maildir path');
     }
 
@@ -614,6 +704,14 @@ app.post('/mailboxes', strictLimiter, async (req, res) => {
     await fs.chown(path.join(maildir, 'new'), VMAIL_UID, VMAIL_GID);
     await fs.chown(path.join(maildir, 'tmp'), VMAIL_UID, VMAIL_GID);
 
+    // Insert mailbox into database
+    const [result] = await connection.execute(
+      'INSERT INTO virtual_users (domain_id, email, password, quota_mb) VALUES (?, ?, ?, ?)',
+      [domainId, email, hashedPassword, quota_mb]
+    );
+
+    await connection.commit();
+
     res.status(201).json({
       success: true,
       mailbox: {
@@ -624,10 +722,20 @@ app.post('/mailboxes', strictLimiter, async (req, res) => {
       message: 'Mailbox created successfully'
     });
   } catch (error) {
+    if (connection) await connection.rollback();
+
+    // Clean up maildir on failure
+    const maildir = path.join('/var/vmail', domain, username);
+    if (await isPathSafe('/var/vmail', maildir)) {
+      await fs.rm(maildir, { recursive: true, force: true }).catch(() => {});
+    }
+
     if (error.code === 'ER_DUP_ENTRY') {
       return res.status(409).json({ error: 'Mailbox already exists' });
     }
     res.status(500).json({ error: error.message });
+  } finally {
+    if (connection) connection.release();
   }
 });
 
@@ -736,26 +844,42 @@ app.post('/aliases', strictLimiter, async (req, res) => {
   // Extract domain from source
   const domain = source.split('@')[1];
 
+  let connection;
   try {
-    // Check if domain exists
-    const [domainRows] = await pool.execute('SELECT id FROM virtual_domains WHERE name = ?', [domain]);
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+
+    // Lock domain row
+    const [domainRows] = await connection.execute(
+      'SELECT id FROM virtual_domains WHERE name = ? FOR UPDATE',
+      [domain]
+    );
+
     if (domainRows.length === 0) {
+      await connection.rollback();
       return res.status(404).json({ error: 'Domain not found. The source email domain must exist.' });
     }
 
     const domainId = domainRows[0].id;
 
-    // Check if source already exists as a mailbox or alias
-    const [mailboxCheck] = await pool.execute('SELECT id FROM virtual_users WHERE email = ?', [source]);
+    // Check if source already exists as a mailbox with lock to prevent race
+    const [mailboxCheck] = await connection.execute(
+      'SELECT id FROM virtual_users WHERE email = ? FOR UPDATE',
+      [source]
+    );
+
     if (mailboxCheck.length > 0) {
+      await connection.rollback();
       return res.status(409).json({ error: 'Source email already exists as a mailbox. Cannot create alias.' });
     }
 
     // Insert alias
-    const [result] = await pool.execute(
+    const [result] = await connection.execute(
       'INSERT INTO virtual_aliases (domain_id, source, destination) VALUES (?, ?, ?)',
       [domainId, source, destination]
     );
+
+    await connection.commit();
 
     res.status(201).json({
       success: true,
@@ -767,10 +891,14 @@ app.post('/aliases', strictLimiter, async (req, res) => {
       message: 'Alias created successfully'
     });
   } catch (error) {
+    if (connection) await connection.rollback();
+
     if (error.code === 'ER_DUP_ENTRY') {
       return res.status(409).json({ error: 'Alias with this source email already exists' });
     }
     res.status(500).json({ error: error.message });
+  } finally {
+    if (connection) connection.release();
   }
 });
 
@@ -834,10 +962,23 @@ app.get('/mailboxes/:email/quota', async (req, res) => {
 
       // Use du to calculate disk usage (in KB), then convert to MB
       const result = await spawnAsync('du', ['-sk', maildir]);
-      const usedKb = parseInt(result.stdout.split('\t')[0]);
-      usedMb = Math.round(usedKb / 1024);
+      const duOutput = result.stdout.trim();
+
+      if (!duOutput) {
+        throw new Error('Empty du output');
+      }
+
+      const usedKb = parseInt(duOutput.split(/\s+/)[0]);
+
+      if (isNaN(usedKb) || usedKb < 0) {
+        console.error(`Invalid du output for ${maildir}: ${duOutput}`);
+        usedMb = 0;
+      } else {
+        usedMb = Math.round(usedKb / 1024);
+      }
     } catch (error) {
       // Maildir doesn't exist yet or du failed, usage is 0
+      console.error(`Quota calculation failed for ${maildir}:`, error.message);
       usedMb = 0;
     }
 

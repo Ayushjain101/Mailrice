@@ -1,12 +1,17 @@
 [Unit]
 Description=Mail Server REST API
 After=network.target mysql.service
+Wants=mysql.service
+Requires=mysql.service
 
 [Service]
 Type=simple
 User=mailapi
 Group=mailapi
 WorkingDirectory=/opt/mailserver-api
+# Wait for MySQL to be ready before starting
+ExecStartPre=/bin/sleep 3
+ExecStartPre=/usr/bin/mysqladmin ping -h localhost --silent
 ExecStart=/usr/bin/node /opt/mailserver-api/server.js
 Restart=always
 RestartSec=10
