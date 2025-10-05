@@ -4,7 +4,35 @@ Deploy a complete mail server with a single command - no manual setup required!
 
 ## 🚀 Quick Install
 
-### Method 1: Direct Download & Deploy
+### Method 1: Auto DNS (Recommended - Zero Configuration!)
+
+**With Cloudflare DNS automation - no manual DNS setup required:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Ayushjain101/mailserver-deployment/main/deploy.sh | bash -s -- \
+  SERVER_IP SSH_USER SSH_PASSWORD DOMAIN HOSTNAME DB_PASSWORD CF_EMAIL CF_API_KEY CF_ZONE_ID
+```
+
+**Example:**
+```bash
+curl -fsSL https://raw.githubusercontent.com/Ayushjain101/mailserver-deployment/main/deploy.sh | bash -s -- \
+  144.217.165.40 ubuntu MyPassword123 example.com mail.example.com '' \
+  you@email.com your_cloudflare_global_api_key your_zone_id
+```
+
+**What it does automatically:**
+- ✅ Installs all dependencies (Git, Ansible, sshpass)
+- ✅ Deploys complete mail server
+- ✅ Generates production API key
+- ✅ Adds domain and generates DKIM
+- ✅ **Creates all DNS records automatically** (A, MX, SPF, DKIM, DMARC)
+- ✅ Returns API key and ready-to-use setup
+
+---
+
+### Method 2: Manual DNS (Basic Install)
+
+**Without DNS automation - you configure DNS manually:**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Ayushjain101/mailserver-deployment/main/deploy.sh | bash -s -- \
@@ -19,33 +47,59 @@ curl -fsSL https://raw.githubusercontent.com/Ayushjain101/mailserver-deployment/
 
 ---
 
-### Method 2: Clone & Deploy
+### Method 3: Clone & Deploy
 
 ```bash
 git clone https://github.com/Ayushjain101/mailserver-deployment.git && \
 cd mailserver-deployment && \
-./deploy.sh SERVER_IP SSH_USER SSH_PASSWORD DOMAIN HOSTNAME
+./deploy.sh SERVER_IP SSH_USER SSH_PASSWORD DOMAIN HOSTNAME DB_PASSWORD CF_EMAIL CF_API_KEY CF_ZONE_ID
 ```
 
-**Example:**
+**Example (with auto DNS):**
 ```bash
 git clone https://github.com/Ayushjain101/mailserver-deployment.git && \
 cd mailserver-deployment && \
-./deploy.sh 144.217.165.40 ubuntu MyPassword123 example.com mail.example.com
+./deploy.sh 144.217.165.40 ubuntu MyPassword123 example.com mail.example.com '' \
+  you@email.com cf_api_key zone_id
 ```
 
 ---
 
 ## 📋 Parameters
 
-| Parameter | Description | Example |
-|-----------|-------------|---------|
-| SERVER_IP | Target server IP address | `144.217.165.40` |
-| SSH_USER | SSH username | `ubuntu` or `root` |
-| SSH_PASSWORD | SSH password | `MyPassword123` |
-| DOMAIN | Your domain name | `example.com` |
-| HOSTNAME | Mail server hostname | `mail.example.com` |
-| DB_PASSWORD | Database password (optional) | `SecureDB2024` |
+| Parameter | Description | Example | Required |
+|-----------|-------------|---------|----------|
+| SERVER_IP | Target server IP address | `144.217.165.40` | Yes |
+| SSH_USER | SSH username | `ubuntu` or `root` | Yes |
+| SSH_PASSWORD | SSH password | `MyPassword123` | Yes |
+| DOMAIN | Your domain name | `example.com` | Yes |
+| HOSTNAME | Mail server hostname | `mail.example.com` | Yes |
+| DB_PASSWORD | Database password (use '' to auto-generate) | `SecureDB2024` or `''` | Optional |
+| CF_EMAIL | Cloudflare account email (for auto DNS) | `you@email.com` | Optional |
+| CF_API_KEY | Cloudflare Global API Key (for auto DNS) | `your_api_key` | Optional |
+| CF_ZONE_ID | Cloudflare Zone ID (for auto DNS) | `zone_id` | Optional |
+
+**Note:** If all three Cloudflare parameters (CF_EMAIL, CF_API_KEY, CF_ZONE_ID) are provided, DNS will be configured automatically!
+
+---
+
+## 🔑 Getting Cloudflare Credentials (For Auto DNS)
+
+### 1. Get your Cloudflare Email
+- This is the email you use to log into Cloudflare
+
+### 2. Get your Global API Key
+1. Log into Cloudflare Dashboard
+2. Click on your profile (top right)
+3. Go to **My Profile** → **API Tokens**
+4. Scroll to **Global API Key** and click "View"
+5. Copy the key
+
+### 3. Get your Zone ID
+1. Go to your domain in Cloudflare
+2. Scroll down on the Overview page
+3. Find **Zone ID** in the right sidebar (under API section)
+4. Copy the Zone ID
 
 ---
 
@@ -85,10 +139,13 @@ The script automatically:
 
 ## 📝 Complete Example
 
-### Step 1: Run One-Line Install
+### Example 1: With Auto DNS (Zero Configuration!)
+
+**Step 1: Run One-Line Install**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Ayushjain101/mailserver-deployment/main/deploy.sh | bash -s -- \
-  15.204.242.87 ubuntu Atoz123456789@ mycompany.com mail.mycompany.com
+  15.204.242.87 ubuntu MyPassword mycompany.com mail.mycompany.com '' \
+  you@email.com cf_global_api_key cf_zone_id
 ```
 
 **Output:**
@@ -96,6 +153,7 @@ curl -fsSL https://raw.githubusercontent.com/Ayushjain101/mailserver-deployment/
 ========================================
   Mail Server Auto-Deploy
 ========================================
+✓ Cloudflare credentials detected - DNS will be configured automatically!
 ✓ Detected: macOS
 ✓ Git already installed
 ✓ Ansible already installed
@@ -106,17 +164,61 @@ curl -fsSL https://raw.githubusercontent.com/Ayushjain101/mailserver-deployment/
 ========================================
   Starting Mail Server Deployment
 ========================================
-Configuration:
-  Server IP:  15.204.242.87
-  Domain:     mycompany.com
-  Hostname:   mail.mycompany.com
-
 [Deployment runs...]
 
 ✓ Deployment Successful!
+
+Configuring DNS automatically via Cloudflare...
+1. Generating API key...
+✓ API key generated
+
+2. Adding domain to mail server...
+✓ Domain added, DKIM key generated
+
+3. Creating DNS records in Cloudflare...
+   ✓ A record created
+   ✓ MX record created
+   ✓ SPF record created
+   ✓ DKIM record created
+   ✓ DMARC record created
+
+✓ DNS configuration completed!
+
+What was configured:
+  ✓ A Record:    mail.mycompany.com → 15.204.242.87
+  ✓ MX Record:   mycompany.com → mail.mycompany.com
+  ✓ SPF Record:  mycompany.com
+  ✓ DKIM Record: mail._domainkey.mycompany.com
+  ✓ DMARC Record: _dmarc.mycompany.com
+
+API Details:
+  URL:     http://mail.mycompany.com/api
+  API Key: abc123xyz...
+
+Your mail server is ready with DNS configured! 🚀
 ```
 
-### Step 2: Configure DNS
+**Step 2: Create your first mailbox**
+```bash
+curl -X POST http://mail.mycompany.com/api/mailboxes \
+  -H "x-api-key: abc123xyz..." \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@mycompany.com","password":"SecurePass123"}'
+```
+
+**That's it! Your mail server is fully configured and ready to use!**
+
+---
+
+### Example 2: Without Auto DNS (Manual Configuration)
+
+**Step 1: Run One-Line Install**
+```bash
+curl -fsSL https://raw.githubusercontent.com/Ayushjain101/mailserver-deployment/main/deploy.sh | bash -s -- \
+  15.204.242.87 ubuntu MyPassword mycompany.com mail.mycompany.com
+```
+
+**Step 2: Configure DNS**
 
 Add these records in your DNS provider:
 
@@ -130,7 +232,7 @@ mail.mycompany.com → 15.204.242.87
 mycompany.com → mail.mycompany.com (Priority: 10)
 ```
 
-### Step 3: Generate API Key
+**Step 3: Generate API Key**
 
 ```bash
 curl -X POST http://mail.mycompany.com/api/api-keys \
@@ -141,7 +243,7 @@ curl -X POST http://mail.mycompany.com/api/api-keys \
 
 **Save the returned API key!**
 
-### Step 4: Add Domain
+**Step 4: Add Domain**
 
 ```bash
 curl -X POST http://mail.mycompany.com/api/domains \
@@ -152,7 +254,7 @@ curl -X POST http://mail.mycompany.com/api/domains \
 
 Add the DKIM record from the response to your DNS.
 
-### Step 5: Create Mailbox
+**Step 5: Create Mailbox**
 
 ```bash
 curl -X POST http://mail.mycompany.com/api/mailboxes \

@@ -23,15 +23,21 @@ SSH_PASS="${3:-}"
 DOMAIN="${4:-}"
 HOSTNAME="${5:-}"
 DB_PASSWORD="${6:-}"
+CF_EMAIL="${7:-}"
+CF_API_KEY="${8:-}"
+CF_ZONE_ID="${9:-}"
 
 # Validate required arguments
 if [ -z "$SERVER_IP" ] || [ -z "$SSH_USER" ] || [ -z "$SSH_PASS" ] || [ -z "$DOMAIN" ] || [ -z "$HOSTNAME" ]; then
   echo -e "${RED}Error: Missing required arguments${NC}"
   echo ""
-  echo "Usage: $0 <server_ip> <ssh_user> <ssh_password> <domain> <hostname> [db_password]"
+  echo "Usage: $0 <server_ip> <ssh_user> <ssh_password> <domain> <hostname> [db_password] [cf_email] [cf_api_key] [cf_zone_id]"
   echo ""
-  echo "Example:"
+  echo "Example (Basic):"
   echo "  $0 1.2.3.4 ubuntu mypassword example.com mail.example.com"
+  echo ""
+  echo "Example (With Auto-DNS via Cloudflare):"
+  echo "  $0 1.2.3.4 ubuntu pass example.com mail.example.com dbpass123 you@email.com cf_api_key zone_id"
   echo ""
   echo "Arguments:"
   echo "  server_ip     - Target server IP address"
@@ -40,8 +46,20 @@ if [ -z "$SERVER_IP" ] || [ -z "$SSH_USER" ] || [ -z "$SSH_PASS" ] || [ -z "$DOM
   echo "  domain        - Your domain (e.g., example.com)"
   echo "  hostname      - Mail server hostname (e.g., mail.example.com)"
   echo "  db_password   - Optional: Database password (auto-generated if not provided)"
+  echo "  cf_email      - Optional: Cloudflare account email (for auto DNS)"
+  echo "  cf_api_key    - Optional: Cloudflare Global API Key (for auto DNS)"
+  echo "  cf_zone_id    - Optional: Cloudflare Zone ID (for auto DNS)"
+  echo ""
+  echo "Note: If Cloudflare credentials are provided, DNS records will be configured automatically!"
   echo ""
   exit 1
+fi
+
+# Check if Cloudflare DNS automation is enabled
+AUTO_DNS=false
+if [ -n "$CF_EMAIL" ] && [ -n "$CF_API_KEY" ] && [ -n "$CF_ZONE_ID" ]; then
+  AUTO_DNS=true
+  echo -e "${GREEN}✓ Cloudflare credentials detected - DNS will be configured automatically!${NC}"
 fi
 
 # Detect OS
@@ -197,35 +215,179 @@ if [ $? -eq 0 ]; then
   echo -e "${GREEN}  ✓ Deployment Successful!${NC}"
   echo -e "${GREEN}========================================${NC}"
   echo ""
-  echo -e "${BLUE}Next Steps:${NC}"
-  echo ""
-  echo "1. Configure DNS Records:"
-  echo "   - A Record:  $HOSTNAME → $SERVER_IP"
-  echo "   - MX Record: $DOMAIN → $HOSTNAME (Priority 10)"
-  echo ""
-  echo "2. Generate API Key:"
-  echo "   curl -X POST http://$HOSTNAME/api/api-keys \\"
-  echo "     -H \"x-api-key: default_key_change_me\" \\"
-  echo "     -H \"Content-Type: application/json\" \\"
-  echo "     -d '{\"description\":\"Production\"}'"
-  echo ""
-  echo "3. Add Domain via API (use the API key from step 2):"
-  echo "   curl -X POST http://$HOSTNAME/api/domains \\"
-  echo "     -H \"x-api-key: YOUR_API_KEY\" \\"
-  echo "     -H \"Content-Type: application/json\" \\"
-  echo "     -d '{\"domain\":\"$DOMAIN\"}'"
-  echo ""
-  echo "4. Create Mailbox:"
-  echo "   curl -X POST http://$HOSTNAME/api/mailboxes \\"
-  echo "     -H \"x-api-key: YOUR_API_KEY\" \\"
-  echo "     -H \"Content-Type: application/json\" \\"
-  echo "     -d '{\"email\":\"admin@$DOMAIN\",\"password\":\"YourPassword\"}'"
-  echo ""
-  echo -e "${BLUE}API URL:${NC} http://$HOSTNAME/api"
-  echo -e "${BLUE}GitHub:${NC}  https://github.com/Ayushjain101/mailserver-deployment"
-  echo ""
-  echo -e "${GREEN}Your mail server is ready! 🚀${NC}"
-  echo ""
+
+  # If Cloudflare DNS automation is enabled, configure DNS automatically
+  if [ "$AUTO_DNS" = true ]; then
+    echo -e "${BLUE}Configuring DNS automatically via Cloudflare...${NC}"
+    echo ""
+
+    # Wait for API to be ready
+    echo -e "${YELLOW}Waiting for API to start...${NC}"
+    sleep 10
+
+    # Generate production API key
+    echo -e "${BLUE}1. Generating API key...${NC}"
+    API_RESPONSE=$(sshpass -p "$SSH_PASS" ssh -o StrictHostKeyChecking=no $SSH_USER@$SERVER_IP "curl -s -X POST http://localhost:3000/api-keys -H 'x-api-key: default_key_change_me' -H 'Content-Type: application/json' -d '{\"description\":\"Production\"}'")
+    API_KEY=$(echo "$API_RESPONSE" | grep -o '"apiKey":"[^"]*' | cut -d'"' -f4)
+
+    if [ -z "$API_KEY" ]; then
+      echo -e "${RED}✗ Failed to generate API key${NC}"
+      echo "Response: $API_RESPONSE"
+    else
+      echo -e "${GREEN}✓ API key generated${NC}"
+    fi
+
+    # Add domain to get DKIM key
+    echo -e "${BLUE}2. Adding domain to mail server...${NC}"
+    DOMAIN_RESPONSE=$(sshpass -p "$SSH_PASS" ssh -o StrictHostKeyChecking=no $SSH_USER@$SERVER_IP "curl -s -X POST http://localhost:3000/domains -H 'x-api-key: $API_KEY' -H 'Content-Type: application/json' -d '{\"domain\":\"$DOMAIN\"}'")
+    DKIM_RECORD=$(echo "$DOMAIN_RESPONSE" | grep -o '"dkimRecord":"[^"]*' | cut -d'"' -f4)
+
+    if [ -z "$DKIM_RECORD" ]; then
+      echo -e "${RED}✗ Failed to add domain${NC}"
+      echo "Response: $DOMAIN_RESPONSE"
+    else
+      echo -e "${GREEN}✓ Domain added, DKIM key generated${NC}"
+    fi
+
+    # Configure Cloudflare DNS
+    echo -e "${BLUE}3. Creating DNS records in Cloudflare...${NC}"
+    CF_API_URL="https://api.cloudflare.com/client/v4/zones/$CF_ZONE_ID/dns_records"
+
+    # A Record for mail server
+    echo -e "   ${YELLOW}Creating A record for $HOSTNAME...${NC}"
+    A_RESPONSE=$(curl -s -X POST "$CF_API_URL" \
+      -H "X-Auth-Email: $CF_EMAIL" \
+      -H "X-Auth-Key: $CF_API_KEY" \
+      -H "Content-Type: application/json" \
+      --data "{\"type\":\"A\",\"name\":\"$HOSTNAME\",\"content\":\"$SERVER_IP\",\"ttl\":120,\"proxied\":false}")
+
+    if echo "$A_RESPONSE" | grep -q '"success":true'; then
+      echo -e "   ${GREEN}✓ A record created${NC}"
+    else
+      echo -e "   ${YELLOW}⚠ A record may already exist or failed${NC}"
+    fi
+
+    # MX Record
+    echo -e "   ${YELLOW}Creating MX record for $DOMAIN...${NC}"
+    MX_RESPONSE=$(curl -s -X POST "$CF_API_URL" \
+      -H "X-Auth-Email: $CF_EMAIL" \
+      -H "X-Auth-Key: $CF_API_KEY" \
+      -H "Content-Type: application/json" \
+      --data "{\"type\":\"MX\",\"name\":\"$DOMAIN\",\"content\":\"$HOSTNAME\",\"priority\":10,\"ttl\":120}")
+
+    if echo "$MX_RESPONSE" | grep -q '"success":true'; then
+      echo -e "   ${GREEN}✓ MX record created${NC}"
+    else
+      echo -e "   ${YELLOW}⚠ MX record may already exist or failed${NC}"
+    fi
+
+    # SPF Record
+    echo -e "   ${YELLOW}Creating SPF record...${NC}"
+    SPF_VALUE="v=spf1 ip4:$SERVER_IP a:$HOSTNAME ~all"
+    SPF_RESPONSE=$(curl -s -X POST "$CF_API_URL" \
+      -H "X-Auth-Email: $CF_EMAIL" \
+      -H "X-Auth-Key: $CF_API_KEY" \
+      -H "Content-Type: application/json" \
+      --data "{\"type\":\"TXT\",\"name\":\"$DOMAIN\",\"content\":\"$SPF_VALUE\",\"ttl\":120}")
+
+    if echo "$SPF_RESPONSE" | grep -q '"success":true'; then
+      echo -e "   ${GREEN}✓ SPF record created${NC}"
+    else
+      echo -e "   ${YELLOW}⚠ SPF record may already exist or failed${NC}"
+    fi
+
+    # DKIM Record
+    if [ -n "$DKIM_RECORD" ]; then
+      echo -e "   ${YELLOW}Creating DKIM record...${NC}"
+      DKIM_RESPONSE=$(curl -s -X POST "$CF_API_URL" \
+        -H "X-Auth-Email: $CF_EMAIL" \
+        -H "X-Auth-Key: $CF_API_KEY" \
+        -H "Content-Type: application/json" \
+        --data "{\"type\":\"TXT\",\"name\":\"mail._domainkey.$DOMAIN\",\"content\":\"$DKIM_RECORD\",\"ttl\":120}")
+
+      if echo "$DKIM_RESPONSE" | grep -q '"success":true'; then
+        echo -e "   ${GREEN}✓ DKIM record created${NC}"
+      else
+        echo -e "   ${YELLOW}⚠ DKIM record may already exist or failed${NC}"
+      fi
+    fi
+
+    # DMARC Record
+    echo -e "   ${YELLOW}Creating DMARC record...${NC}"
+    DMARC_VALUE="v=DMARC1; p=quarantine; rua=mailto:postmaster@$DOMAIN"
+    DMARC_RESPONSE=$(curl -s -X POST "$CF_API_URL" \
+      -H "X-Auth-Email: $CF_EMAIL" \
+      -H "X-Auth-Key: $CF_API_KEY" \
+      -H "Content-Type: application/json" \
+      --data "{\"type\":\"TXT\",\"name\":\"_dmarc.$DOMAIN\",\"content\":\"$DMARC_VALUE\",\"ttl\":120}")
+
+    if echo "$DMARC_RESPONSE" | grep -q '"success":true'; then
+      echo -e "   ${GREEN}✓ DMARC record created${NC}"
+    else
+      echo -e "   ${YELLOW}⚠ DMARC record may already exist or failed${NC}"
+    fi
+
+    echo ""
+    echo -e "${GREEN}✓ DNS configuration completed!${NC}"
+    echo ""
+    echo -e "${BLUE}What was configured:${NC}"
+    echo "  ✓ A Record:    $HOSTNAME → $SERVER_IP"
+    echo "  ✓ MX Record:   $DOMAIN → $HOSTNAME (Priority 10)"
+    echo "  ✓ SPF Record:  $DOMAIN"
+    echo "  ✓ DKIM Record: mail._domainkey.$DOMAIN"
+    echo "  ✓ DMARC Record: _dmarc.$DOMAIN"
+    echo ""
+    echo -e "${BLUE}API Details:${NC}"
+    echo "  URL:     http://$HOSTNAME/api"
+    echo "  API Key: $API_KEY"
+    echo ""
+    echo -e "${BLUE}Next Steps:${NC}"
+    echo ""
+    echo "1. Create your first mailbox:"
+    echo "   curl -X POST http://$HOSTNAME/api/mailboxes \\"
+    echo "     -H \"x-api-key: $API_KEY\" \\"
+    echo "     -H \"Content-Type: application/json\" \\"
+    echo "     -d '{\"email\":\"admin@$DOMAIN\",\"password\":\"YourPassword\"}'"
+    echo ""
+    echo "2. Configure your email client:"
+    echo "   - SMTP: $HOSTNAME:587 (STARTTLS)"
+    echo "   - IMAP: $HOSTNAME:143 (STARTTLS)"
+    echo "   - Username: your email address"
+    echo ""
+    echo -e "${GREEN}Your mail server is ready with DNS configured! 🚀${NC}"
+    echo ""
+  else
+    # Manual DNS configuration instructions
+    echo -e "${BLUE}Next Steps:${NC}"
+    echo ""
+    echo "1. Configure DNS Records:"
+    echo "   - A Record:  $HOSTNAME → $SERVER_IP"
+    echo "   - MX Record: $DOMAIN → $HOSTNAME (Priority 10)"
+    echo ""
+    echo "2. Generate API Key:"
+    echo "   curl -X POST http://$HOSTNAME/api/api-keys \\"
+    echo "     -H \"x-api-key: default_key_change_me\" \\"
+    echo "     -H \"Content-Type: application/json\" \\"
+    echo "     -d '{\"description\":\"Production\"}'"
+    echo ""
+    echo "3. Add Domain via API (use the API key from step 2):"
+    echo "   curl -X POST http://$HOSTNAME/api/domains \\"
+    echo "     -H \"x-api-key: YOUR_API_KEY\" \\"
+    echo "     -H \"Content-Type: application/json\" \\"
+    echo "     -d '{\"domain\":\"$DOMAIN\"}'"
+    echo ""
+    echo "4. Create Mailbox:"
+    echo "   curl -X POST http://$HOSTNAME/api/mailboxes \\"
+    echo "     -H \"x-api-key: YOUR_API_KEY\" \\"
+    echo "     -H \"Content-Type: application/json\" \\"
+    echo "     -d '{\"email\":\"admin@$DOMAIN\",\"password\":\"YourPassword\"}'"
+    echo ""
+    echo -e "${BLUE}API URL:${NC} http://$HOSTNAME/api"
+    echo -e "${BLUE}GitHub:${NC}  https://github.com/Ayushjain101/mailserver-deployment"
+    echo ""
+    echo -e "${GREEN}Your mail server is ready! 🚀${NC}"
+    echo ""
+  fi
 else
   echo ""
   echo -e "${RED}========================================${NC}"

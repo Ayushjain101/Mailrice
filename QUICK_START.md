@@ -4,12 +4,19 @@
 
 **No setup required - works on any OS!**
 
+### Basic Install
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Ayushjain101/mailserver-deployment/main/deploy.sh | bash -s -- \
   SERVER_IP SSH_USER SSH_PASSWORD DOMAIN HOSTNAME
 ```
 
-Replace with your values and run! The script auto-installs all dependencies.
+### With Auto DNS (Cloudflare) - Zero Configuration!
+```bash
+curl -fsSL https://raw.githubusercontent.com/Ayushjain101/mailserver-deployment/main/deploy.sh | bash -s -- \
+  SERVER_IP SSH_USER SSH_PASSWORD DOMAIN HOSTNAME '' CF_EMAIL CF_API_KEY CF_ZONE_ID
+```
+
+Replace with your values and run! The script auto-installs all dependencies and optionally configures DNS automatically.
 
 📖 **[See full guide](ONE_LINE_INSTALL.md)**
 
