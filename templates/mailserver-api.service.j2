@@ -1,0 +1,15 @@
+[Unit]
+Description=Mail Server REST API
+After=network.target mysql.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/mailserver-api
+ExecStart=/usr/bin/node /opt/mailserver-api/server.js
+Restart=always
+RestartSec=10
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=multi-user.target

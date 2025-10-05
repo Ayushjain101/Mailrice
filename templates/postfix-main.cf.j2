@@ -1,0 +1,60 @@
+# Postfix main configuration - Auto-generated
+# Hostname and domain settings
+myhostname = {{ hostname }}
+mydomain = {{ domain }}
+myorigin = $mydomain
+mydestination = localhost
+
+# Network settings
+inet_interfaces = all
+inet_protocols = ipv4
+
+# Virtual domain configuration (MySQL-backed)
+virtual_mailbox_domains = mysql:/etc/postfix/mysql-virtual-mailbox-domains.cf
+virtual_mailbox_maps = mysql:/etc/postfix/mysql-virtual-mailbox-maps.cf
+virtual_alias_maps = mysql:/etc/postfix/mysql-virtual-alias-maps.cf
+
+# Mailbox settings
+virtual_transport = lmtp:unix:private/dovecot-lmtp
+virtual_uid_maps = static:{{ vmail_uid }}
+virtual_gid_maps = static:{{ vmail_gid }}
+
+# SASL Authentication (via Dovecot)
+smtpd_sasl_auth_enable = yes
+smtpd_sasl_type = dovecot
+smtpd_sasl_path = private/auth
+smtpd_sasl_security_options = noanonymous
+smtpd_sasl_local_domain = $myhostname
+broken_sasl_auth_clients = yes
+
+# TLS settings
+smtpd_tls_cert_file = /etc/ssl/certs/ssl-cert-snakeoil.pem
+smtpd_tls_key_file = /etc/ssl/private/ssl-cert-snakeoil.key
+smtpd_use_tls = yes
+smtpd_tls_security_level = may
+smtpd_tls_session_cache_database = btree:${data_directory}/smtpd_scache
+smtp_tls_session_cache_database = btree:${data_directory}/smtp_scache
+
+# SMTP client settings
+smtp_tls_security_level = may
+
+# Restrictions
+smtpd_recipient_restrictions =
+    permit_mynetworks,
+    permit_sasl_authenticated,
+    reject_unauth_destination
+
+smtpd_relay_restrictions =
+    permit_mynetworks,
+    permit_sasl_authenticated,
+    reject_unauth_destination
+
+# Message size limit (50MB)
+message_size_limit = 52428800
+
+# Mailbox size limit (0 = unlimited, quota handled by Dovecot)
+mailbox_size_limit = 0
+
+# Other settings
+recipient_delimiter = +
+compatibility_level = 2

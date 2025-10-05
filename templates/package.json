@@ -1,0 +1,15 @@
+{
+  "name": "mailserver-api",
+  "version": "1.0.0",
+  "description": "REST API for mail server automation",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "body-parser": "^1.20.2",
+    "mysql2": "^3.6.1",
+    "dotenv": "^16.3.1"
+  }
+}

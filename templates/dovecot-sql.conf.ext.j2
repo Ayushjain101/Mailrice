@@ -1,0 +1,11 @@
+driver = mysql
+connect = host=127.0.0.1 dbname={{ db_name }} user={{ db_user }} password={{ db_password }}
+
+# Password scheme - using PLAIN for compatibility
+default_pass_scheme = PLAIN
+
+# Password query
+password_query = SELECT email as user, password FROM virtual_users WHERE email='%u'
+
+# User query
+user_query = SELECT email as user, 'maildir:/var/vmail/%d/%n' as mail, {{ vmail_uid }} AS uid, {{ vmail_gid }} AS gid FROM virtual_users WHERE email='%u'
