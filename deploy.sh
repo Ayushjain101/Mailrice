@@ -424,7 +424,7 @@ if [ $? -eq 0 ]; then
     # Generate email content
     if [ "$AUTO_DNS" = true ]; then
       EMAIL_SUBJECT="✓ Mail Server Deployment Successful - $DOMAIN"
-      EMAIL_BODY="$(cat <<EOF
+      read -r -d '' EMAIL_BODY <<EMAILEND
 Mail Server Deployment - SUCCESS
 
 Your mail server has been successfully deployed with automatic DNS configuration!
@@ -524,11 +524,11 @@ Your mail server is ready to use! 🚀
 
 ---
 This email was sent automatically by the Mail Server Auto-Deploy system.
-EOF
-)"
+EMAILEND
+
     else
       EMAIL_SUBJECT="✓ Mail Server Deployment Successful - $DOMAIN"
-      EMAIL_BODY="$(cat <<EOF
+      read -r -d '' EMAIL_BODY <<EMAILEND
 Mail Server Deployment - SUCCESS
 
 Your mail server has been successfully deployed!
@@ -619,24 +619,26 @@ Your mail server is ready! 🚀
 
 ---
 This email was sent automatically by the Mail Server Auto-Deploy system.
-EOF
-)"
+EMAILEND
+
     fi
 
     # Send email via the deployed mail server
     echo -e "${YELLOW}Creating email message...${NC}"
 
-    sshpass -p "$SSH_PASS" ssh -o StrictHostKeyChecking=no $SSH_USER@$SERVER_IP "cat > /tmp/deployment-email.txt <<'EMAILEOF'
+    # Create email file locally to avoid quote issues
+    cat > /tmp/deployment-email-local.txt << ENDMAIL
 From: Mail Server System <$SYSTEM_EMAIL>
 To: $EMAIL_RECIPIENT
 Subject: $EMAIL_SUBJECT
 Content-Type: text/plain; charset=UTF-8
 
 $EMAIL_BODY
-EMAILEOF"
+ENDMAIL
 
-    # Send via sendmail
+    # Copy to server and send
     echo -e "${YELLOW}Sending email to $EMAIL_RECIPIENT...${NC}"
+    sshpass -p "$SSH_PASS" scp -o StrictHostKeyChecking=no /tmp/deployment-email-local.txt $SSH_USER@$SERVER_IP:/tmp/deployment-email.txt > /dev/null 2>&1
     SEND_RESULT=$(sshpass -p "$SSH_PASS" ssh -o StrictHostKeyChecking=no $SSH_USER@$SERVER_IP "cat /tmp/deployment-email.txt | sendmail -t && echo 'SUCCESS' || echo 'FAILED'")
 
     if echo "$SEND_RESULT" | grep -q "SUCCESS"; then
@@ -649,6 +651,7 @@ EMAILEOF"
     fi
 
     # Cleanup
+    rm -f /tmp/deployment-email-local.txt
     sshpass -p "$SSH_PASS" ssh -o StrictHostKeyChecking=no $SSH_USER@$SERVER_IP "rm -f /tmp/deployment-email.txt" > /dev/null 2>&1
     echo ""
   fi
