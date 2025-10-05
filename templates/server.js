@@ -2,28 +2,101 @@ const express = require('express');
 const bodyParser = require('body-parser');
 const mysql = require('mysql2/promise');
 const crypto = require('crypto');
-const { exec } = require('child_process');
-const { promisify } = require('util');
+const { spawn } = require('child_process');
 const fs = require('fs').promises;
 const path = require('path');
 const rateLimit = require('express-rate-limit');
 require('dotenv').config();
 
-const execAsync = promisify(exec);
+// System user IDs for file ownership
+const VMAIL_UID = parseInt(process.env.VMAIL_UID) || 5000;
+const VMAIL_GID = parseInt(process.env.VMAIL_GID) || 5000;
+
+// ==================== SECURITY: INPUT VALIDATION ====================
+
+// Validate email address (RFC 5322 compliant)
+function isValidEmail(email) {
+  if (!email || typeof email !== 'string') return false;
+  const emailRegex = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
+  return emailRegex.test(email) && email.length <= 254;
+}
+
+// Validate domain name (RFC 1035)
+function isValidDomain(domain) {
+  if (!domain || typeof domain !== 'string') return false;
+  const domainRegex = /^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/;
+  return domainRegex.test(domain) && domain.length <= 253;
+}
+
+// Validate DKIM selector
+function isValidSelector(selector) {
+  if (!selector || typeof selector !== 'string') return false;
+  const selectorRegex = /^[a-zA-Z0-9._-]+$/;
+  return selectorRegex.test(selector) && selector.length <= 63;
+}
+
+// Validate path is within allowed directory
+async function isPathSafe(basePath, targetPath) {
+  try {
+    const normalizedBase = path.resolve(basePath);
+    const normalizedTarget = path.resolve(targetPath);
+    return normalizedTarget.startsWith(normalizedBase);
+  } catch (error) {
+    return false;
+  }
+}
+
+// ==================== SECURITY: SAFE COMMAND EXECUTION ====================
+
+// Execute command without shell (prevents injection)
+function spawnAsync(command, args = [], options = {}) {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(command, args, {
+      ...options,
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+
+    let stdout = '';
+    let stderr = '';
+
+    proc.stdout.on('data', (data) => stdout += data);
+    proc.stderr.on('data', (data) => stderr += data);
+
+    proc.on('close', (code) => {
+      if (code === 0) {
+        resolve({ stdout: stdout.trim(), stderr: stderr.trim() });
+      } else {
+        reject(new Error(`Command failed with code ${code}: ${stderr}`));
+      }
+    });
+
+    proc.on('error', reject);
+  });
+}
 
 // Helper function to generate SHA512-CRYPT password (Dovecot compatible)
 function generateSHA512Password(password) {
   return new Promise((resolve, reject) => {
-    exec(
-      `doveadm pw -s SHA512-CRYPT -p '${password.replace(/'/g, "'\\''")}'`,
-      (error, stdout, stderr) => {
-        if (error) {
-          reject(error);
-        } else {
-          resolve(stdout.trim());
-        }
+    // Use spawn to prevent shell injection
+    const proc = spawn('doveadm', ['pw', '-s', 'SHA512-CRYPT', '-p', password], {
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+
+    let stdout = '';
+    let stderr = '';
+
+    proc.stdout.on('data', (data) => stdout += data);
+    proc.stderr.on('data', (data) => stderr += data);
+
+    proc.on('close', (code) => {
+      if (code === 0) {
+        resolve(stdout.trim());
+      } else {
+        reject(new Error(`Password generation failed: ${stderr}`));
       }
-    );
+    });
+
+    proc.on('error', reject);
   });
 }
 const app = express();
@@ -109,41 +182,45 @@ app.use(generalLimiter); // General rate limit applies after successful auth
 
 // Helper function to generate DKIM keys
 async function generateDKIMKeys(domain, selector = 'mail') {
-  const dkimDir = '/etc/opendkim/keys/' + domain;
+  const dkimDir = path.join('/etc/opendkim/keys', domain);
   const privateKeyPath = path.join(dkimDir, 'mail.private');
   const txtPath = path.join(dkimDir, 'mail.txt');
 
   try {
-    // Create directory
-    await execAsync(`sudo mkdir -p ${dkimDir}`);
+    // Create directory using Node.js fs
+    await fs.mkdir(dkimDir, { recursive: true, mode: 0o755 });
 
-    // Generate DKIM key
-    await execAsync(
-      `sudo opendkim-genkey -b 2048 -d ${domain} -D ${dkimDir} -s ${selector} -v`
-    );
+    // Generate DKIM key using spawn (no shell injection)
+    // Note: opendkim-genkey requires sudo (configured in sudoers)
+    await spawnAsync('sudo', [
+      'opendkim-genkey',
+      '-b', '2048',
+      '-d', domain,
+      '-D', dkimDir,
+      '-s', selector,
+      '-v'
+    ]);
 
-    // Set permissions
-    await execAsync(`sudo chown -R opendkim:opendkim ${dkimDir}`);
-    await execAsync(`sudo chmod 600 ${privateKeyPath}`);
+    // Set permissions using fs.chmod
+    await fs.chmod(privateKeyPath, 0o600);
 
-    // Read keys
-    const { stdout: privateKey } = await execAsync(`sudo cat ${privateKeyPath}`);
-    const { stdout: publicKeyRaw } = await execAsync(`sudo cat ${txtPath}`);
+    // Read keys using Node.js fs (mailapi user is in opendkim group)
+    const privateKey = await fs.readFile(privateKeyPath, 'utf8');
+    const publicKeyRaw = await fs.readFile(txtPath, 'utf8');
 
     // Extract public key from TXT record
     const publicKeyMatch = publicKeyRaw.match(/p=([^"]+)/);
     const publicKey = publicKeyMatch ? publicKeyMatch[1].replace(/\s/g, '') : '';
 
-    // Update KeyTable and SigningTable
-    await execAsync(
-      `echo "${selector}._domainkey.${domain} ${domain}:${selector}:${privateKeyPath}" | sudo tee -a /etc/opendkim/KeyTable`
-    );
-    await execAsync(
-      `echo "*@${domain} ${selector}._domainkey.${domain}" | sudo tee -a /etc/opendkim/SigningTable`
-    );
+    // Update KeyTable and SigningTable using Node.js fs
+    const keyTableEntry = `${selector}._domainkey.${domain} ${domain}:${selector}:${privateKeyPath}\n`;
+    const signingTableEntry = `*@${domain} ${selector}._domainkey.${domain}\n`;
 
-    // Reload OpenDKIM
-    await execAsync('sudo systemctl reload opendkim');
+    await fs.appendFile('/etc/opendkim/KeyTable', keyTableEntry);
+    await fs.appendFile('/etc/opendkim/SigningTable', signingTableEntry);
+
+    // Reload OpenDKIM using spawn (allowed in sudoers)
+    await spawnAsync('sudo', ['systemctl', 'reload', 'opendkim']);
 
     return {
       privateKey: privateKey.trim(),
@@ -195,8 +272,14 @@ app.get('/domains/:domain', async (req, res) => {
 app.post('/domains', strictLimiter, async (req, res) => {
   const { domain, dkim_selector = 'mail' } = req.body;
 
-  if (!domain) {
-    return res.status(400).json({ error: 'Domain name required' });
+  // Validate domain name
+  if (!domain || !isValidDomain(domain)) {
+    return res.status(400).json({ error: 'Invalid domain name' });
+  }
+
+  // Validate DKIM selector
+  if (!isValidSelector(dkim_selector)) {
+    return res.status(400).json({ error: 'Invalid DKIM selector' });
   }
 
   try {
@@ -233,6 +316,11 @@ app.post('/domains', strictLimiter, async (req, res) => {
 
 // Delete domain
 app.delete('/domains/:domain', async (req, res) => {
+  // Validate domain
+  if (!isValidDomain(req.params.domain)) {
+    return res.status(400).json({ error: 'Invalid domain name' });
+  }
+
   try {
     const [result] = await pool.execute('DELETE FROM virtual_domains WHERE name = ?', [req.params.domain]);
 
@@ -240,8 +328,13 @@ app.delete('/domains/:domain', async (req, res) => {
       return res.status(404).json({ error: 'Domain not found' });
     }
 
-    // Clean up DKIM files
-    await execAsync(`sudo rm -rf /etc/opendkim/keys/${req.params.domain}`).catch(() => {});
+    // Clean up DKIM files using Node.js fs
+    const dkimDir = path.join('/etc/opendkim/keys', req.params.domain);
+
+    // Validate path safety before deletion
+    if (await isPathSafe('/etc/opendkim/keys', dkimDir)) {
+      await fs.rm(dkimDir, { recursive: true, force: true }).catch(() => {});
+    }
 
     res.json({ success: true, message: 'Domain deleted successfully' });
   } catch (error) {
@@ -310,15 +403,22 @@ app.get('/mailboxes/:email', async (req, res) => {
 app.post('/mailboxes', strictLimiter, async (req, res) => {
   const { email, password, quota_mb = 1000 } = req.body;
 
-  if (!email || !password) {
-    return res.status(400).json({ error: 'Email and password required' });
+  // Validate inputs
+  if (!email || !isValidEmail(email)) {
+    return res.status(400).json({ error: 'Invalid email address' });
+  }
+
+  if (!password || password.length < 8) {
+    return res.status(400).json({ error: 'Password must be at least 8 characters' });
+  }
+
+  if (typeof quota_mb !== 'number' || quota_mb < 1 || quota_mb > 100000) {
+    return res.status(400).json({ error: 'Invalid quota (1-100000 MB)' });
   }
 
   // Extract domain from email
   const domain = email.split('@')[1];
-  if (!domain) {
-    return res.status(400).json({ error: 'Invalid email format' });
-  }
+  const username = email.split('@')[0];
 
   try {
     // Check if domain exists
@@ -338,10 +438,24 @@ app.post('/mailboxes', strictLimiter, async (req, res) => {
       [domainId, email, hashedPassword, quota_mb]
     );
 
-    // Create maildir
-    const maildir = `/var/vmail/${domain}/${email.split('@')[0]}`;
-    await execAsync(`sudo mkdir -p ${maildir}/{cur,new,tmp}`);
-    await execAsync(`sudo chown -R vmail:vmail /var/vmail`);
+    // Create maildir using Node.js fs (no sudo needed)
+    const maildir = path.join('/var/vmail', domain, username);
+
+    // Validate path safety
+    if (!await isPathSafe('/var/vmail', maildir)) {
+      throw new Error('Invalid maildir path');
+    }
+
+    // Create maildir structure
+    await fs.mkdir(path.join(maildir, 'cur'), { recursive: true, mode: 0o700 });
+    await fs.mkdir(path.join(maildir, 'new'), { recursive: true, mode: 0o700 });
+    await fs.mkdir(path.join(maildir, 'tmp'), { recursive: true, mode: 0o700 });
+
+    // Set ownership to vmail:vmail
+    await fs.chown(maildir, VMAIL_UID, VMAIL_GID);
+    await fs.chown(path.join(maildir, 'cur'), VMAIL_UID, VMAIL_GID);
+    await fs.chown(path.join(maildir, 'new'), VMAIL_UID, VMAIL_GID);
+    await fs.chown(path.join(maildir, 'tmp'), VMAIL_UID, VMAIL_GID);
 
     res.status(201).json({
       success: true,
@@ -388,6 +502,11 @@ app.put('/mailboxes/:email/password', async (req, res) => {
 
 // Delete mailbox
 app.delete('/mailboxes/:email', async (req, res) => {
+  // Validate email
+  if (!isValidEmail(req.params.email)) {
+    return res.status(400).json({ error: 'Invalid email address' });
+  }
+
   try {
     const [result] = await pool.execute('DELETE FROM virtual_users WHERE email = ?', [req.params.email]);
 
@@ -395,10 +514,15 @@ app.delete('/mailboxes/:email', async (req, res) => {
       return res.status(404).json({ error: 'Mailbox not found' });
     }
 
-    // Clean up maildir
+    // Clean up maildir using Node.js fs (no sudo needed)
     const domain = req.params.email.split('@')[1];
     const username = req.params.email.split('@')[0];
-    await execAsync(`sudo rm -rf /var/vmail/${domain}/${username}`).catch(() => {});
+    const maildir = path.join('/var/vmail', domain, username);
+
+    // Validate path safety before deletion
+    if (await isPathSafe('/var/vmail', maildir)) {
+      await fs.rm(maildir, { recursive: true, force: true }).catch(() => {});
+    }
 
     res.json({ success: true, message: 'Mailbox deleted successfully' });
   } catch (error) {
