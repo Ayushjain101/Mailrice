@@ -1,7 +1,0 @@
-[mailserver]
-# Replace with your server IP or hostname
-your-server-ip ansible_user=root
-
-# Examples:
-# 15.204.242.87 ansible_user=ubuntu ansible_become=yes
-# mail.example.com ansible_user=root
