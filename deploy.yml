@@ -294,6 +294,22 @@
         group: mailapi
         recurse: yes
 
+    - name: Ensure OpenDKIM directory exists
+      file:
+        path: /etc/opendkim
+        state: directory
+        owner: opendkim
+        group: opendkim
+        mode: '0755'
+
+    - name: Ensure OpenDKIM keys directory exists
+      file:
+        path: /etc/opendkim/keys
+        state: directory
+        owner: opendkim
+        group: opendkim
+        mode: '0750'
+
     - name: Create OpenDKIM config files if they don't exist
       file:
         path: "{{ item }}"
