@@ -1112,6 +1112,287 @@ app.put('/mailboxes/:email/quota', async (req, res) => {
   }
 });
 
+// ==================== DASHBOARD ENDPOINTS ====================
+
+// Dashboard stats
+app.get('/dashboard/stats', async (req, res) => {
+  try {
+    // Get domain count
+    const [domainsTotal] = await pool.execute('SELECT COUNT(*) as count FROM virtual_domains');
+    const [domainsToday] = await pool.execute(
+      'SELECT COUNT(*) as count FROM virtual_domains WHERE DATE(created_at) = CURDATE()'
+    );
+
+    // Get mailbox count
+    const [mailboxesTotal] = await pool.execute('SELECT COUNT(*) as count FROM virtual_users');
+    const [mailboxesToday] = await pool.execute(
+      'SELECT COUNT(*) as count FROM virtual_users WHERE DATE(created_at) = CURDATE()'
+    );
+
+    // Get API key count
+    const [apiKeysTotal] = await pool.execute('SELECT COUNT(*) as count FROM api_keys');
+
+    res.json({
+      domains: {
+        total: domainsTotal[0].count,
+        today: domainsToday[0].count
+      },
+      mailboxes: {
+        total: mailboxesTotal[0].count,
+        today: mailboxesToday[0].count
+      },
+      api_keys: {
+        total: apiKeysTotal[0].count,
+        active: apiKeysTotal[0].count
+      },
+      emails_sent: {
+        total: 0,  // Placeholder - implement when sending logs added
+        today: 0
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Dashboard domains with health check
+app.get('/dashboard/domains', async (req, res) => {
+  try {
+    const [domains] = await pool.execute(
+      'SELECT name, dkim_public_key, spf_record, dmarc_record, created_at FROM virtual_domains ORDER BY created_at DESC LIMIT 10'
+    );
+
+    const domainsWithHealth = domains.map(domain => ({
+      name: domain.name,
+      dkim_status: domain.dkim_public_key ? 'configured' : 'missing',
+      spf_status: domain.spf_record ? 'configured' : 'missing',
+      dmarc_status: domain.dmarc_record ? 'configured' : 'missing',
+      created_at: domain.created_at
+    }));
+
+    res.json({ domains: domainsWithHealth });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Dashboard activity feed
+app.get('/dashboard/activity', async (req, res) => {
+  try {
+    // Get recent domains
+    const [recentDomains] = await pool.execute(
+      'SELECT name, created_at FROM virtual_domains ORDER BY created_at DESC LIMIT 5'
+    );
+
+    // Get recent mailboxes
+    const [recentMailboxes] = await pool.execute(
+      'SELECT email, created_at FROM virtual_users ORDER BY created_at DESC LIMIT 5'
+    );
+
+    // Get recent API keys
+    const [recentApiKeys] = await pool.execute(
+      'SELECT description, created_at FROM api_keys ORDER BY created_at DESC LIMIT 5'
+    );
+
+    // Combine and sort all activities
+    const activities = [];
+
+    recentDomains.forEach(item => {
+      activities.push({
+        time: formatTimeAgo(item.created_at),
+        description: `Domain added: ${item.name}`,
+        timestamp: item.created_at
+      });
+    });
+
+    recentMailboxes.forEach(item => {
+      activities.push({
+        time: formatTimeAgo(item.created_at),
+        description: `Mailbox created: ${item.email}`,
+        timestamp: item.created_at
+      });
+    });
+
+    recentApiKeys.forEach(item => {
+      activities.push({
+        time: formatTimeAgo(item.created_at),
+        description: `API key "${item.description}" created`,
+        timestamp: item.created_at
+      });
+    });
+
+    // Sort by timestamp and return top 10
+    activities.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+    res.json({ activity: activities.slice(0, 10) });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Helper function to format time ago
+function formatTimeAgo(date) {
+  const seconds = Math.floor((new Date() - new Date(date)) / 1000);
+
+  if (seconds < 60) return `${seconds}s ago`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+  return `${Math.floor(seconds / 86400)}d ago`;
+}
+
+// Dashboard queue status
+app.get('/dashboard/queue', async (req, res) => {
+  try {
+    // Use postqueue command to check mail queue
+    const qstatResult = await spawnAsync('sudo', ['postqueue', '-p']);
+    const output = qstatResult.stdout || '';
+
+    // Parse queue output (simplified)
+    let active = 0;
+    let deferred = 0;
+    let hold = 0;
+
+    if (output.includes('Mail queue is empty')) {
+      // Queue is empty
+    } else {
+      // Count messages (very basic parsing)
+      const lines = output.split('\n');
+      lines.forEach(line => {
+        if (line.match(/^[A-F0-9]{10}/)) {
+          if (line.includes('HOLD')) hold++;
+          else if (line.includes('*')) deferred++;
+          else active++;
+        }
+      });
+    }
+
+    res.json({
+      active: active,
+      deferred: deferred,
+      hold: hold
+    });
+  } catch (error) {
+    // If postqueue fails, return zeros
+    res.json({
+      active: 0,
+      deferred: 0,
+      hold: 0
+    });
+  }
+});
+
+// Dashboard queue flush
+app.post('/dashboard/queue/flush', async (req, res) => {
+  try {
+    await spawnAsync('sudo', ['postqueue', '-f']);
+    res.json({ success: true, message: 'Queue flushed successfully' });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to flush queue: ' + error.message });
+  }
+});
+
+// Dashboard system health
+app.get('/dashboard/health', async (req, res) => {
+  try {
+    const health = {
+      api: true,
+      database: false,
+      postfix: false,
+      dovecot: false,
+      opendkim: false,
+      disk_usage: 'N/A',
+      load_average: 'N/A',
+      last_check: 'just now'
+    };
+
+    // Check database
+    try {
+      await pool.execute('SELECT 1');
+      health.database = true;
+    } catch (error) {
+      console.error('Database check failed:', error.message);
+    }
+
+    // Check Postfix
+    try {
+      const postfixResult = await spawnAsync('systemctl', ['is-active', 'postfix']);
+      health.postfix = postfixResult.stdout.trim() === 'active';
+    } catch (error) {
+      console.error('Postfix check failed:', error.message);
+    }
+
+    // Check Dovecot
+    try {
+      const dovecotResult = await spawnAsync('systemctl', ['is-active', 'dovecot']);
+      health.dovecot = dovecotResult.stdout.trim() === 'active';
+    } catch (error) {
+      console.error('Dovecot check failed:', error.message);
+    }
+
+    // Check OpenDKIM
+    try {
+      const opendkimResult = await spawnAsync('systemctl', ['is-active', 'opendkim']);
+      health.opendkim = opendkimResult.stdout.trim() === 'active';
+    } catch (error) {
+      console.error('OpenDKIM check failed:', error.message);
+    }
+
+    // Check disk usage
+    try {
+      const dfResult = await spawnAsync('df', ['-h', '/']);
+      const lines = dfResult.stdout.trim().split('\n');
+      if (lines.length > 1) {
+        const parts = lines[1].split(/\s+/);
+        if (parts.length >= 5) {
+          health.disk_usage = `${parts[4]} (${parts[2]} / ${parts[1]})`;
+        }
+      }
+    } catch (error) {
+      console.error('Disk check failed:', error.message);
+    }
+
+    // Check load average
+    try {
+      const loadResult = await spawnAsync('uptime');
+      const loadMatch = loadResult.stdout.match(/load average: ([\d.]+, [\d.]+, [\d.]+)/);
+      if (loadMatch) {
+        health.load_average = loadMatch[1];
+      }
+    } catch (error) {
+      console.error('Load check failed:', error.message);
+    }
+
+    res.json(health);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Dashboard sending chart data
+app.get('/dashboard/sending-chart', async (req, res) => {
+  try {
+    // Placeholder data - will be populated when sending logs are implemented
+    const last7Days = [];
+    const values = [];
+
+    for (let i = 6; i >= 0; i--) {
+      const date = new Date();
+      date.setDate(date.getDate() - i);
+      last7Days.push(date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }));
+      values.push(0); // Placeholder
+    }
+
+    res.json({
+      data: {
+        labels: last7Days,
+        values: values
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Test database connection on startup
 async function testDatabaseConnection() {
   try {

@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mailrice Dashboard</title>
+    <link rel="stylesheet" href="/css/dashboard.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-container">
+            <div class="nav-brand">
+                <h1>📧 Mailrice</h1>
+                <span class="nav-subtitle">Marketing Email Infrastructure</span>
+            </div>
+            <div class="nav-actions">
+                <span class="nav-user" id="userDisplay"></span>
+                <button class="btn btn-secondary" onclick="refreshDashboard()">🔄 Refresh</button>
+                <button class="btn btn-danger" onclick="logout()">Logout</button>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container">
+        <!-- Quick Stats Cards -->
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-icon">🌐</div>
+                <div class="stat-content">
+                    <h3 id="totalDomains">-</h3>
+                    <p>Total Domains</p>
+                    <small id="domainsToday">Loading...</small>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon">📮</div>
+                <div class="stat-content">
+                    <h3 id="totalMailboxes">-</h3>
+                    <p>Mailboxes</p>
+                    <small id="mailboxesToday">Loading...</small>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon">🔑</div>
+                <div class="stat-content">
+                    <h3 id="totalApiKeys">-</h3>
+                    <p>API Keys</p>
+                    <small id="apiKeysActive">Loading...</small>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon">📊</div>
+                <div class="stat-content">
+                    <h3 id="totalSent">-</h3>
+                    <p>Emails Sent</p>
+                    <small id="sentToday">Today: -</small>
+                </div>
+            </div>
+        </div>
+
+        <!-- Quick Actions -->
+        <div class="quick-actions">
+            <h2>⚡ Quick Actions</h2>
+            <div class="action-buttons">
+                <button class="btn btn-primary" onclick="showAddDomainModal()">+ Add Domain</button>
+                <button class="btn btn-primary" onclick="showAddMailboxModal()">+ Create Mailbox</button>
+                <button class="btn btn-primary" onclick="showGenerateApiKeyModal()">+ Generate API Key</button>
+                <button class="btn btn-secondary" onclick="showLogsModal()">📋 View Logs</button>
+                <button class="btn btn-secondary" onclick="flushQueue()">🔄 Flush Queue</button>
+                <button class="btn btn-secondary" onclick="exportData()">📥 Export Data</button>
+            </div>
+        </div>
+
+        <!-- Main Dashboard Grid -->
+        <div class="dashboard-grid">
+            <!-- Domain Health Panel -->
+            <div class="panel">
+                <div class="panel-header">
+                    <h2>🌐 Domain Health</h2>
+                    <button class="btn btn-sm" onclick="refreshDomains()">Refresh</button>
+                </div>
+                <div class="panel-content" id="domainHealthList">
+                    <div class="loading">Loading domains...</div>
+                </div>
+            </div>
+
+            <!-- Recent Activity Feed -->
+            <div class="panel">
+                <div class="panel-header">
+                    <h2>📋 Recent Activity</h2>
+                    <button class="btn btn-sm" onclick="refreshActivity()">Refresh</button>
+                </div>
+                <div class="panel-content" id="activityFeed">
+                    <div class="loading">Loading activity...</div>
+                </div>
+            </div>
+
+            <!-- Queue Monitor -->
+            <div class="panel">
+                <div class="panel-header">
+                    <h2>📬 Mail Queue Status</h2>
+                    <button class="btn btn-sm" onclick="refreshQueue()">Refresh</button>
+                </div>
+                <div class="panel-content" id="queueStatus">
+                    <div class="loading">Loading queue status...</div>
+                </div>
+            </div>
+
+            <!-- System Health -->
+            <div class="panel">
+                <div class="panel-header">
+                    <h2>💚 System Health</h2>
+                    <button class="btn btn-sm" onclick="refreshHealth()">Refresh</button>
+                </div>
+                <div class="panel-content" id="systemHealth">
+                    <div class="loading">Loading system health...</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Sending Chart -->
+        <div class="panel chart-panel">
+            <div class="panel-header">
+                <h2>📈 Emails Sent (Last 7 Days)</h2>
+                <button class="btn btn-sm" onclick="refreshChart()">Refresh</button>
+            </div>
+            <div class="panel-content">
+                <canvas id="sendingChart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modals -->
+    <div id="modalOverlay" class="modal-overlay" onclick="closeAllModals()"></div>
+
+    <!-- Add Domain Modal -->
+    <div id="addDomainModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Add Domain</h2>
+                <button class="modal-close" onclick="closeModal('addDomainModal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="addDomainForm" onsubmit="addDomain(event)">
+                    <div class="form-group">
+                        <label>Domain Name</label>
+                        <input type="text" id="domainName" placeholder="example.com" required>
+                    </div>
+                    <div class="form-group">
+                        <label>DKIM Selector</label>
+                        <input type="text" id="dkimSelector" value="mail" required>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Add Domain</button>
+                </form>
+                <div id="addDomainResult"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Mailbox Modal -->
+    <div id="addMailboxModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Create Mailbox</h2>
+                <button class="modal-close" onclick="closeModal('addMailboxModal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="addMailboxForm" onsubmit="addMailbox(event)">
+                    <div class="form-group">
+                        <label>Email Address</label>
+                        <input type="email" id="mailboxEmail" placeholder="user@example.com" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Password</label>
+                        <input type="password" id="mailboxPassword" placeholder="Min 12 chars, mixed case, numbers, symbols" required>
+                        <small>Must be 12+ characters with uppercase, lowercase, number, and special character</small>
+                    </div>
+                    <div class="form-group">
+                        <label>Quota (MB)</label>
+                        <input type="number" id="mailboxQuota" value="1000" min="1" max="100000" required>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Create Mailbox</button>
+                </form>
+                <div id="addMailboxResult"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Generate API Key Modal -->
+    <div id="generateApiKeyModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Generate API Key</h2>
+                <button class="modal-close" onclick="closeModal('generateApiKeyModal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="generateApiKeyForm" onsubmit="generateApiKey(event)">
+                    <div class="form-group">
+                        <label>Description</label>
+                        <input type="text" id="apiKeyDescription" placeholder="My Integration" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Master API Key</label>
+                        <input type="password" id="masterApiKey" placeholder="Enter master key" required>
+                        <small>Found in /root/.mailserver_credentials on server</small>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Generate Key</button>
+                </form>
+                <div id="generateApiKeyResult"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- DNS Records Modal -->
+    <div id="dnsRecordsModal" class="modal">
+        <div class="modal-content modal-large">
+            <div class="modal-header">
+                <h2>DNS Records</h2>
+                <button class="modal-close" onclick="closeModal('dnsRecordsModal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div id="dnsRecordsContent"></div>
+            </div>
+        </div>
+    </div>
+
+    <footer class="footer">
+        <p>Mailrice v1.0 | Last updated: <span id="lastUpdate">-</span> | <a href="https://github.com/Ayushjain101/Mailrice" target="_blank">GitHub</a></p>
+    </footer>
+
+    <script src="/js/dashboard.js"></script>
+</body>
+</html>

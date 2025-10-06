@@ -256,6 +256,11 @@
           mailapi ALL=(ALL) NOPASSWD: /bin/chown * /var/vmail/*
           mailapi ALL=(ALL) NOPASSWD: /bin/systemctl reload opendkim
           mailapi ALL=(ALL) NOPASSWD: /bin/systemctl restart opendkim
+          mailapi ALL=(ALL) NOPASSWD: /usr/bin/postqueue -p
+          mailapi ALL=(ALL) NOPASSWD: /usr/bin/postqueue -f
+          mailapi ALL=(ALL) NOPASSWD: /usr/bin/systemctl is-active *
+          mailapi ALL=(ALL) NOPASSWD: /usr/bin/df *
+          mailapi ALL=(ALL) NOPASSWD: /usr/bin/uptime
         validate: 'visudo -cf %s'
 
     - name: Create API directory
@@ -318,6 +323,55 @@
         dest: /etc/systemd/system/mailserver-api.service
       notify: restart mailserver-api
 
+    - name: Create Dashboard directory
+      file:
+        path: /opt/mailserver-dashboard
+        state: directory
+        mode: '0755'
+
+    - name: Create Dashboard subdirectories
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - /opt/mailserver-dashboard/css
+        - /opt/mailserver-dashboard/js
+
+    - name: Copy Dashboard HTML files
+      copy:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+        mode: '0644'
+      loop:
+        - { src: 'templates/dashboard.html', dest: '/opt/mailserver-dashboard/index.html' }
+        - { src: 'templates/login.html', dest: '/opt/mailserver-dashboard/login.html' }
+
+    - name: Copy Dashboard CSS
+      copy:
+        src: templates/dashboard.css
+        dest: /opt/mailserver-dashboard/css/dashboard.css
+        mode: '0644'
+
+    - name: Copy Dashboard JavaScript
+      copy:
+        src: templates/dashboard.js
+        dest: /opt/mailserver-dashboard/js/dashboard.js
+        mode: '0644'
+
+    - name: Configure Nginx for Dashboard subdomain
+      template:
+        src: templates/nginx-dashboard.conf.j2
+        dest: /etc/nginx/sites-available/mailserver-dashboard
+      notify: restart nginx
+
+    - name: Enable Dashboard Nginx site
+      file:
+        src: /etc/nginx/sites-available/mailserver-dashboard
+        dest: /etc/nginx/sites-enabled/mailserver-dashboard
+        state: link
+      notify: restart nginx
+
     - name: Configure Nginx reverse proxy for API
       template:
         src: templates/nginx-api.conf.j2
@@ -345,7 +399,7 @@
         port: 80
         timeout: 30
 
-    - name: Obtain Let's Encrypt SSL certificate
+    - name: Obtain Let's Encrypt SSL certificate for mail hostname
       shell: |
         certbot certonly --nginx \
           --non-interactive \
@@ -356,6 +410,19 @@
       args:
         creates: /etc/letsencrypt/live/{{ hostname }}/fullchain.pem
       register: certbot_result
+      ignore_errors: yes
+
+    - name: Obtain Let's Encrypt SSL certificate for dashboard (wow subdomain)
+      shell: |
+        certbot certonly --nginx \
+          --non-interactive \
+          --agree-tos \
+          --email postmaster@{{ domain }} \
+          --domains wow.{{ domain }} \
+          --keep-until-expiring
+      args:
+        creates: /etc/letsencrypt/live/wow.{{ domain }}/fullchain.pem
+      register: certbot_dashboard_result
       ignore_errors: yes
 
     - name: Create certbot renewal hook directory
@@ -643,21 +710,23 @@
       debug:
         msg: |
           ========================================
-          Mail Server Deployment Complete!
+          🎉 Mailrice Deployment Complete!
           ========================================
           Domain: {{ domain }}
-          Hostname: {{ hostname }}
+          Mail Hostname: {{ hostname }}
+          Dashboard URL: https://wow.{{ domain }}
           API URL: http://{{ ansible_default_ipv4.address }}:{{ api_port }}
           Server IP: {{ ansible_default_ipv4.address }}
 
-          CREDENTIALS (saved to /root/.mailserver_credentials):
+          🔐 CREDENTIALS (saved to /root/.mailserver_credentials):
           ========================================
+          Dashboard Login: Use Initial API Key below
           Initial API Key: {{ initial_api_key }}
           Master API Key: {{ master_api_key }}
           DB Password: {{ db_password }}
           ========================================
 
-          DNS RECORDS FOR {{ domain }} (saved to /root/.mailserver_dns_records):
+          📋 DNS RECORDS FOR {{ domain }} (saved to /root/.mailserver_dns_records):
           ========================================
           {% if dns_records is defined and dns_records.json is defined %}
           DKIM: {{ dns_records.json.dns_records.dkim }}
@@ -668,18 +737,45 @@
           {% endif %}
           ========================================
 
-          Next Steps:
-          1. Add DNS records above to your DNS provider
-          2. Add A record: {{ hostname }} → {{ ansible_default_ipv4.address }}
-          3. Wait 5-10 minutes for DNS propagation
-          4. Create mailbox: curl -X POST http://{{ ansible_default_ipv4.address }}:{{ api_port }}/mailboxes -H "x-api-key: {{ initial_api_key }}" -H "Content-Type: application/json" -d '{"email":"user@{{ domain }}","password":"YourSecurePassword123!"}'
-          5. Test email sending
+          🌐 REQUIRED DNS RECORDS:
+          ========================================
+          1. A Record: {{ hostname }} → {{ ansible_default_ipv4.address }}
+          2. A Record: wow.{{ domain }} → {{ ansible_default_ipv4.address }}
+          3. Add the DKIM, SPF, and DMARC records shown above
+          ========================================
 
-          To create additional API keys:
-          curl -X POST http://{{ ansible_default_ipv4.address }}:{{ api_port }}/api-keys -H "Content-Type: application/json" -d '{"master_key":"{{ master_api_key }}","description":"My API Key"}'
+          📧 Next Steps:
+          ========================================
+          1. Add all DNS records above to your DNS provider
+          2. Wait 5-10 minutes for DNS propagation
+          3. Access dashboard: https://wow.{{ domain }}
+          4. Login with your Initial API Key
+          5. Create your first mailbox via dashboard
+          6. Start sending emails!
 
-          To get DNS records later:
-          curl http://{{ ansible_default_ipv4.address }}:{{ api_port }}/domains/{{ domain }}/dns -H "x-api-key: {{ initial_api_key }}"
+          🚀 Quick Actions:
+          ========================================
+          Access Dashboard:
+            https://wow.{{ domain }}
+
+          Create mailbox (API):
+            curl -X POST http://{{ ansible_default_ipv4.address }}:{{ api_port }}/mailboxes \
+              -H "x-api-key: {{ initial_api_key }}" \
+              -H "Content-Type: application/json" \
+              -d '{"email":"sender@{{ domain }}","password":"YourSecurePass123!","quota_mb":1000}'
+
+          Generate additional API keys:
+            curl -X POST http://{{ ansible_default_ipv4.address }}:{{ api_port }}/api-keys \
+              -H "Content-Type: application/json" \
+              -d '{"master_key":"{{ master_api_key }}","description":"My App"}'
+
+          View DNS records:
+            curl http://{{ ansible_default_ipv4.address }}:{{ api_port }}/domains/{{ domain }}/dns \
+              -H "x-api-key: {{ initial_api_key }}"
+          ========================================
+
+          📚 Documentation:
+          GitHub: https://github.com/Ayushjain101/Mailrice
           ========================================
 
   handlers:
