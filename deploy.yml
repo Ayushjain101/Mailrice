@@ -14,6 +14,10 @@
     api_port: 3000
     vmail_uid: 5000
     vmail_gid: 5000
+    # Cloudflare credentials (optional) - provide via --extra-vars for DNS automation
+    cf_email: "{{ cf_email | default('') }}"
+    cf_api_key: "{{ cf_api_key | default('') }}"
+    cf_zone_id: "{{ cf_zone_id | default('') }}"
 
   tasks:
     - name: Check if database password file exists
@@ -133,6 +137,22 @@
         state: import
         target: /tmp/schema.sql
         login_unix_socket: /var/run/mysqld/mysqld.sock
+
+    - name: Check if SPF/DMARC columns exist in virtual_domains table
+      shell: >
+        mysql -e "SHOW COLUMNS FROM virtual_domains LIKE 'spf_record';" {{ db_name }} | grep -q spf_record
+      register: spf_column_check
+      ignore_errors: yes
+      changed_when: false
+
+    - name: Add SPF/DMARC columns if missing (schema migration)
+      shell: >
+        mysql {{ db_name }} -e "ALTER TABLE virtual_domains
+        ADD COLUMN spf_record TEXT AFTER dkim_public_key,
+        ADD COLUMN dmarc_record TEXT AFTER spf_record,
+        ADD COLUMN server_ip VARCHAR(45) AFTER dmarc_record;"
+      when: spf_column_check.rc != 0
+      ignore_errors: yes
 
     - name: Insert initial API key into database
       shell: |
@@ -333,6 +353,15 @@
         - /etc/opendkim/KeyTable
         - /etc/opendkim/SigningTable
 
+    - name: Set OpenDKIM directory permissions for group write access
+      file:
+        path: /etc/opendkim
+        state: directory
+        owner: opendkim
+        group: opendkim
+        mode: '0775'
+        recurse: yes
+
     - name: Create systemd service for API
       template:
         src: templates/mailserver-api.service.j2
@@ -374,6 +403,84 @@
         src: templates/dashboard.js
         dest: /opt/mailserver-dashboard/js/dashboard.js
         mode: '0644'
+
+    - name: Create webroot directory for SSL certificate acquisition
+      file:
+        path: /var/www/html
+        state: directory
+        mode: '0755'
+
+    - name: Create DNS A record for mail hostname via Cloudflare
+      uri:
+        url: "https://api.cloudflare.com/client/v4/zones/{{ cf_zone_id }}/dns_records"
+        method: POST
+        headers:
+          X-Auth-Email: "{{ cf_email }}"
+          X-Auth-Key: "{{ cf_api_key }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          type: "A"
+          name: "{{ hostname }}"
+          content: "{{ ansible_default_ipv4.address }}"
+          ttl: 120
+          proxied: false
+        status_code: [200, 201]
+      when: cf_email != '' and cf_api_key != '' and cf_zone_id != ''
+      ignore_errors: yes
+      register: dns_hostname_result
+
+    - name: Create DNS A record for dashboard subdomain via Cloudflare
+      uri:
+        url: "https://api.cloudflare.com/client/v4/zones/{{ cf_zone_id }}/dns_records"
+        method: POST
+        headers:
+          X-Auth-Email: "{{ cf_email }}"
+          X-Auth-Key: "{{ cf_api_key }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          type: "A"
+          name: "wow.{{ domain }}"
+          content: "{{ ansible_default_ipv4.address }}"
+          ttl: 120
+          proxied: false
+        status_code: [200, 201]
+      when: cf_email != '' and cf_api_key != '' and cf_zone_id != ''
+      ignore_errors: yes
+      register: dns_dashboard_result
+
+    - name: Wait for DNS propagation
+      pause:
+        seconds: 30
+      when: (dns_hostname_result is changed or dns_dashboard_result is changed) and (dns_hostname_result is not failed and dns_dashboard_result is not failed)
+
+    - name: Create temporary HTTP-only nginx config for certbot
+      copy:
+        dest: /etc/nginx/sites-available/certbot-temp
+        content: |
+          server {
+              listen 80 default_server;
+              listen [::]:80 default_server;
+              server_name {{ hostname }} wow.{{ domain }};
+              root /var/www/html;
+
+              location / {
+                  return 200 'OK';
+                  add_header Content-Type text/plain;
+              }
+
+              location /.well-known/acme-challenge/ {
+                  root /var/www/html;
+              }
+          }
+        mode: '0644'
+
+    - name: Enable temporary nginx config
+      file:
+        src: /etc/nginx/sites-available/certbot-temp
+        dest: /etc/nginx/sites-enabled/certbot-temp
+        state: link
 
     - name: Configure Nginx for Dashboard subdomain
       template:
@@ -417,7 +524,8 @@
 
     - name: Obtain Let's Encrypt SSL certificate for mail hostname
       shell: |
-        certbot certonly --nginx \
+        certbot certonly --webroot \
+          -w /var/www/html \
           --non-interactive \
           --agree-tos \
           --email postmaster@{{ domain }} \
@@ -430,7 +538,8 @@
 
     - name: Obtain Let's Encrypt SSL certificate for dashboard (wow subdomain)
       shell: |
-        certbot certonly --nginx \
+        certbot certonly --webroot \
+          -w /var/www/html \
           --non-interactive \
           --agree-tos \
           --email postmaster@{{ domain }} \
@@ -440,6 +549,20 @@
         creates: /etc/letsencrypt/live/wow.{{ domain }}/fullchain.pem
       register: certbot_dashboard_result
       ignore_errors: yes
+
+    - name: Reload Nginx after SSL certificate acquisition
+      systemd:
+        name: nginx
+        state: reloaded
+      when: (certbot_result is succeeded or certbot_dashboard_result is succeeded) and (certbot_result is changed or certbot_dashboard_result is changed)
+      ignore_errors: yes
+
+    - name: Remove temporary certbot nginx config
+      file:
+        path: /etc/nginx/sites-enabled/certbot-temp
+        state: absent
+      when: certbot_result is succeeded or certbot_dashboard_result is succeeded
+      notify: reload nginx
 
     - name: Create certbot renewal hook directory
       file:
@@ -814,6 +937,11 @@
       systemd:
         name: nginx
         state: restarted
+
+    - name: reload nginx
+      systemd:
+        name: nginx
+        state: reloaded
 
     - name: restart fail2ban
       systemd:
