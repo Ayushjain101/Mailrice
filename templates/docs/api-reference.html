@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>API Reference - Mailrice Documentation</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 1000px; margin: 0 auto; padding: 2rem; }
+        h1 { color: #2563eb; border-bottom: 3px solid #2563eb; padding-bottom: 0.5rem; }
+        h2 { color: #1e40af; margin-top: 2.5rem; padding-top: 1rem; border-top: 1px solid #e5e7eb; }
+        h3 { color: #1e3a8a; margin-top: 1.5rem; }
+        code { background: #f3f4f6; padding: 0.2rem 0.4rem; border-radius: 3px; font-size: 0.9em; font-family: 'Courier New', monospace; }
+        pre { background: #1f2937; color: #f9fafb; padding: 1.5rem; border-radius: 8px; overflow-x: auto; margin: 1rem 0; }
+        pre code { background: none; padding: 0; color: #10b981; }
+        .endpoint { background: #f9fafb; border-left: 4px solid #3b82f6; padding: 1rem; margin: 1rem 0; border-radius: 4px; }
+        .method { display: inline-block; padding: 0.25rem 0.75rem; border-radius: 4px; font-weight: 600; font-size: 0.875rem; margin-right: 0.5rem; }
+        .method-get { background: #10b981; color: white; }
+        .method-post { background: #3b82f6; color: white; }
+        .method-put { background: #f59e0b; color: white; }
+        .method-delete { background: #ef4444; color: white; }
+        .alert { padding: 1rem; border-radius: 8px; margin: 1rem 0; border-left: 4px solid; }
+        .alert-info { background: #dbeafe; border-color: #3b82f6; }
+        .alert-warning { background: #fef3c7; border-color: #f59e0b; }
+        table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-size: 0.9rem; }
+        th, td { border: 1px solid #e5e7eb; padding: 0.75rem; text-align: left; }
+        th { background: #f3f4f6; font-weight: 600; }
+        .param-required { color: #ef4444; font-weight: 600; }
+        .param-optional { color: #6b7280; }
+    </style>
+</head>
+<body>
+    <h1>📚 Mailrice API Reference</h1>
+
+    <div class="alert alert-info">
+        <strong>Base URL:</strong> <code>https://smtp.yourdomain.com/api</code><br>
+        <strong>Authentication:</strong> Include <code>x-api-key</code> header with all requests
+    </div>
+
+    <h2>🔐 Authentication</h2>
+    <p>All API requests require an API key in the headers:</p>
+    <pre><code>x-api-key: YOUR_API_KEY_HERE</code></pre>
+
+    <p>Your initial API key is available in <code>/root/.mailserver_credentials</code> after deployment.</p>
+
+    <h2>📊 Health & Status</h2>
+
+    <div class="endpoint">
+        <h3><span class="method method-get">GET</span> /health</h3>
+        <p>Check API server health and connectivity.</p>
+
+        <h4>Request:</h4>
+        <pre><code>curl https://smtp.yourdomain.com/api/health \
+  -H "x-api-key: YOUR_API_KEY"</code></pre>
+
+        <h4>Response (200 OK):</h4>
+        <pre><code>{
+  "status": "ok",
+  "message": "Mail server API is running",
+  "timestamp": "2024-01-15T10:30:00Z"
+}</code></pre>
+    </div>
+
+    <h2>🌐 Domain Management</h2>
+
+    <div class="endpoint">
+        <h3><span class="method method-post">POST</span> /domains</h3>
+        <p>Add a new email domain with automatic DKIM, SPF, and DMARC generation.</p>
+
+        <h4>Request Body:</h4>
+        <table>
+            <thead>
+                <tr>
+                    <th>Parameter</th>
+                    <th>Type</th>
+                    <th>Required</th>
+                    <th>Description</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>domain</code></td>
+                    <td>string</td>
+                    <td class="param-required">Yes</td>
+                    <td>Domain name (e.g., example.com)</td>
+                </tr>
+                <tr>
+                    <td><code>dkim_selector</code></td>
+                    <td>string</td>
+                    <td class="param-optional">No</td>
+                    <td>DKIM selector (default: "mail")</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h4>Request:</h4>
+        <pre><code>curl -X POST https://smtp.yourdomain.com/api/domains \
+  -H "x-api-key: YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "domain": "example.com",
+    "dkim_selector": "mail"
+  }'</code></pre>
+
+        <h4>Response (201 Created):</h4>
+        <pre><code>{
+  "success": true,
+  "message": "Domain created successfully",
+  "domain": "example.com",
+  "dns_records": {
+    "dkim": "mail._domainkey.example.com IN TXT \"v=DKIM1; k=rsa; p=MIIBIjAN...\"",
+    "spf": "example.com IN TXT \"v=spf1 ip4:1.2.3.4 -all\"",
+    "dmarc": "_dmarc.example.com IN TXT \"v=DMARC1; p=reject; rua=mailto:dmarc@example.com; fo=1; adkim=s; aspf=s; pct=100\""
+  }
+}</code></pre>
+    </div>
+
+    <div class="endpoint">
+        <h3><span class="method method-get">GET</span> /domains</h3>
+        <p>List all domains configured on the mail server.</p>
+
+        <h4>Request:</h4>
+        <pre><code>curl https://smtp.yourdomain.com/api/domains \
+  -H "x-api-key: YOUR_API_KEY"</code></pre>
+
+        <h4>Response (200 OK):</h4>
+        <pre><code>{
+  "domains": [
+    {
+      "id": 1,
+      "name": "example.com",
+      "dkim_selector": "mail",
+      "server_ip": "1.2.3.4",
+      "created_at": "2024-01-15T10:00:00Z"
+    }
+  ]
+}</code></pre>
+    </div>
+
+    <div class="endpoint">
+        <h3><span class="method method-get">GET</span> /domains/:domain/dns</h3>
+        <p>Get DNS records for a specific domain.</p>
+
+        <h4>Request:</h4>
+        <pre><code>curl https://smtp.yourdomain.com/api/domains/example.com/dns \
+  -H "x-api-key: YOUR_API_KEY"</code></pre>
+
+        <h4>Response (200 OK):</h4>
+        <pre><code>{
+  "domain": "example.com",
+  "dns_records": {
+    "dkim": "mail._domainkey.example.com IN TXT \"v=DKIM1; k=rsa; p=...\"",
+    "spf": "example.com IN TXT \"v=spf1 ip4:1.2.3.4 -all\"",
+    "dmarc": "_dmarc.example.com IN TXT \"v=DMARC1; p=reject; ...\""
+  }
+}</code></pre>
+    </div>
+
+    <div class="endpoint">
+        <h3><span class="method method-delete">DELETE</span> /domains/:domain</h3>
+        <p>Delete a domain and all associated mailboxes.</p>
+
+        <h4>Request:</h4>
+        <pre><code>curl -X DELETE https://smtp.yourdomain.com/api/domains/example.com \
+  -H "x-api-key: YOUR_API_KEY"</code></pre>
+
+        <h4>Response (200 OK):</h4>
+        <pre><code>{
+  "success": true,
+  "message": "Domain deleted successfully"
+}</code></pre>
+    </div>
+
+    <h2>📧 Mailbox Management</h2>
+
+    <div class="endpoint">
+        <h3><span class="method method-post">POST</span> /mailboxes</h3>
+        <p>Create a new mailbox for sending/receiving emails.</p>
+
+        <h4>Request Body:</h4>
+        <table>
+            <thead>
+                <tr>
+                    <th>Parameter</th>
+                    <th>Type</th>
+                    <th>Required</th>
+                    <th>Description</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>email</code></td>
+                    <td>string</td>
+                    <td class="param-required">Yes</td>
+                    <td>Email address</td>
+                </tr>
+                <tr>
+                    <td><code>password</code></td>
+                    <td>string</td>
+                    <td class="param-required">Yes</td>
+                    <td>Mailbox password (min 8 characters)</td>
+                </tr>
+                <tr>
+                    <td><code>quota_mb</code></td>
+                    <td>integer</td>
+                    <td class="param-optional">No</td>
+                    <td>Storage quota in MB (default: 1000)</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h4>Request:</h4>
+        <pre><code>curl -X POST https://smtp.yourdomain.com/api/mailboxes \
+  -H "x-api-key: YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "user@example.com",
+    "password": "SecurePass123!",
+    "quota_mb": 2000
+  }'</code></pre>
+
+        <h4>Response (201 Created):</h4>
+        <pre><code>{
+  "success": true,
+  "message": "Mailbox created successfully",
+  "mailbox": {
+    "email": "user@example.com",
+    "quota_mb": 2000,
+    "created_at": "2024-01-15T10:30:00Z"
+  }
+}</code></pre>
+    </div>
+
+    <div class="endpoint">
+        <h3><span class="method method-get">GET</span> /mailboxes</h3>
+        <p>List all mailboxes across all domains.</p>
+
+        <h4>Request:</h4>
+        <pre><code>curl https://smtp.yourdomain.com/api/mailboxes \
+  -H "x-api-key: YOUR_API_KEY"</code></pre>
+
+        <h4>Response (200 OK):</h4>
+        <pre><code>{
+  "mailboxes": [
+    {
+      "id": 1,
+      "email": "user@example.com",
+      "domain": "example.com",
+      "quota_mb": 1000,
+      "created_at": "2024-01-15T10:00:00Z"
+    }
+  ]
+}</code></pre>
+    </div>
+
+    <div class="endpoint">
+        <h3><span class="method method-delete">DELETE</span> /mailboxes/:email</h3>
+        <p>Delete a mailbox permanently.</p>
+
+        <h4>Request:</h4>
+        <pre><code>curl -X DELETE https://smtp.yourdomain.com/api/mailboxes/user@example.com \
+  -H "x-api-key: YOUR_API_KEY"</code></pre>
+
+        <h4>Response (200 OK):</h4>
+        <pre><code>{
+  "success": true,
+  "message": "Mailbox deleted successfully"
+}</code></pre>
+    </div>
+
+    <h2>🔑 API Key Management</h2>
+
+    <div class="endpoint">
+        <h3><span class="method method-post">POST</span> /api-keys</h3>
+        <p>Generate a new API key (requires Master API Key).</p>
+
+        <h4>Request Body:</h4>
+        <table>
+            <thead>
+                <tr>
+                    <th>Parameter</th>
+                    <th>Type</th>
+                    <th>Required</th>
+                    <th>Description</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>master_key</code></td>
+                    <td>string</td>
+                    <td class="param-required">Yes</td>
+                    <td>Master API key from credentials file</td>
+                </tr>
+                <tr>
+                    <td><code>description</code></td>
+                    <td>string</td>
+                    <td class="param-optional">No</td>
+                    <td>Key description/purpose</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h4>Request:</h4>
+        <pre><code>curl -X POST https://smtp.yourdomain.com/api/api-keys \
+  -H "Content-Type: application/json" \
+  -d '{
+    "master_key": "MASTER_API_KEY",
+    "description": "Production App Key"
+  }'</code></pre>
+
+        <h4>Response (201 Created):</h4>
+        <pre><code>{
+  "success": true,
+  "api_key": "NEW_64_CHAR_API_KEY_HERE",
+  "description": "Production App Key",
+  "created_at": "2024-01-15T10:30:00Z"
+}</code></pre>
+
+        <div class="alert alert-warning">
+            <strong>⚠️ Important:</strong> Save the API key immediately. It cannot be retrieved later.
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <h3><span class="method method-get">GET</span> /api-keys</h3>
+        <p>List all API keys (does not show the actual keys, only metadata).</p>
+
+        <h4>Request:</h4>
+        <pre><code>curl https://smtp.yourdomain.com/api/api-keys \
+  -H "x-api-key: YOUR_API_KEY"</code></pre>
+
+        <h4>Response (200 OK):</h4>
+        <pre><code>{
+  "api_keys": [
+    {
+      "id": 1,
+      "description": "Initial API Key",
+      "created_at": "2024-01-15T08:00:00Z",
+      "last_used_at": "2024-01-15T10:30:00Z"
+    }
+  ]
+}</code></pre>
+    </div>
+
+    <h2>📊 Dashboard Endpoints</h2>
+
+    <div class="endpoint">
+        <h3><span class="method method-get">GET</span> /dashboard/stats</h3>
+        <p>Get dashboard statistics (domains, mailboxes, API keys, emails sent).</p>
+
+        <h4>Request:</h4>
+        <pre><code>curl https://smtp.yourdomain.com/api/dashboard/stats \
+  -H "x-api-key: YOUR_API_KEY"</code></pre>
+
+        <h4>Response (200 OK):</h4>
+        <pre><code>{
+  "domains": { "total": 5, "today": 2 },
+  "mailboxes": { "total": 25, "today": 3 },
+  "api_keys": { "total": 10, "active": 8 },
+  "emails_sent": { "total": 1500, "today": 45 }
+}</code></pre>
+    </div>
+
+    <div class="endpoint">
+        <h3><span class="method method-get">GET</span> /dashboard/health</h3>
+        <p>Get system health status for all mail services.</p>
+
+        <h4>Request:</h4>
+        <pre><code>curl https://smtp.yourdomain.com/api/dashboard/health \
+  -H "x-api-key: YOUR_API_KEY"</code></pre>
+
+        <h4>Response (200 OK):</h4>
+        <pre><code>{
+  "api": true,
+  "database": true,
+  "postfix": true,
+  "dovecot": true,
+  "opendkim": true,
+  "disk_usage": "15%",
+  "load_average": "0.45",
+  "last_check": "2024-01-15T10:30:00Z"
+}</code></pre>
+    </div>
+
+    <div class="endpoint">
+        <h3><span class="method method-get">GET</span> /dashboard/queue</h3>
+        <p>Get mail queue status.</p>
+
+        <h4>Request:</h4>
+        <pre><code>curl https://smtp.yourdomain.com/api/dashboard/queue \
+  -H "x-api-key: YOUR_API_KEY"</code></pre>
+
+        <h4>Response (200 OK):</h4>
+        <pre><code>{
+  "active": 2,
+  "deferred": 0,
+  "hold": 0
+}</code></pre>
+    </div>
+
+    <h2>❌ Error Responses</h2>
+
+    <h3>401 Unauthorized</h3>
+    <pre><code>{
+  "error": "Invalid or missing API key"
+}</code></pre>
+
+    <h3>400 Bad Request</h3>
+    <pre><code>{
+  "error": "Domain already exists"
+}</code></pre>
+
+    <h3>404 Not Found</h3>
+    <pre><code>{
+  "error": "Domain not found"
+}</code></pre>
+
+    <h3>500 Internal Server Error</h3>
+    <pre><code>{
+  "error": "Database connection failed"
+}</code></pre>
+
+    <h2>📝 Rate Limits</h2>
+    <p>Currently no rate limits are enforced. For production use, consider implementing rate limiting at the application or nginx level.</p>
+
+    <h2>🔒 Security Best Practices</h2>
+    <ul>
+        <li>Never commit API keys to version control</li>
+        <li>Use environment variables for API keys in production</li>
+        <li>Rotate API keys regularly</li>
+        <li>Use HTTPS for all API requests</li>
+        <li>Restrict API access by IP when possible</li>
+        <li>Monitor API key usage via <code>last_used_at</code> timestamps</li>
+    </ul>
+</body>
+</html>

@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Documentation - Mailrice</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; padding: 0; background: #f9fafb; }
+        .doc-container { display: flex; min-height: 100vh; }
+        .doc-sidebar { width: 250px; background: #1f2937; color: white; padding: 2rem 0; position: fixed; height: 100vh; overflow-y: auto; }
+        .doc-content { margin-left: 250px; flex: 1; padding: 2rem; max-width: 1200px; }
+        .doc-sidebar h2 { padding: 0 1.5rem; font-size: 1.25rem; margin-bottom: 1rem; color: #60a5fa; }
+        .doc-menu-item { padding: 0.75rem 1.5rem; cursor: pointer; transition: background 0.2s; display: flex; align-items: center; gap: 0.5rem; }
+        .doc-menu-item:hover { background: #374151; }
+        .doc-menu-item.active { background: #3b82f6; }
+        .doc-icon { font-size: 1.25rem; }
+        iframe { width: 100%; min-height: calc(100vh - 4rem); border: none; background: white; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    </style>
+</head>
+<body>
+    <div class="doc-container">
+        <div class="doc-sidebar">
+            <h2>📚 Documentation</h2>
+            <div class="doc-menu-item active" onclick="loadDoc('getting-started')">
+                <span class="doc-icon">🚀</span>
+                <span>Getting Started</span>
+            </div>
+            <div class="doc-menu-item" onclick="loadDoc('api-reference')">
+                <span class="doc-icon">📖</span>
+                <span>API Reference</span>
+            </div>
+            <div class="doc-menu-item" onclick="window.parent.postMessage('close-docs', '*')">
+                <span class="doc-icon">⬅️</span>
+                <span>Back to Dashboard</span>
+            </div>
+        </div>
+        <div class="doc-content">
+            <iframe id="docFrame" src="/docs/getting-started.html"></iframe>
+        </div>
+    </div>
+
+    <script>
+        function loadDoc(doc) {
+            document.querySelectorAll('.doc-menu-item').forEach(item => {
+                item.classList.remove('active');
+            });
+            event.target.closest('.doc-menu-item').classList.add('active');
+            document.getElementById('docFrame').src = `/docs/${doc}.html`;
+        }
+    </script>
+</body>
+</html>

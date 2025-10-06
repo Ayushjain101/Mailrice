@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Getting Started - Mailrice Documentation</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 900px; margin: 0 auto; padding: 2rem; }
+        h1 { color: #2563eb; border-bottom: 3px solid #2563eb; padding-bottom: 0.5rem; }
+        h2 { color: #1e40af; margin-top: 2rem; }
+        h3 { color: #1e3a8a; }
+        code { background: #f3f4f6; padding: 0.2rem 0.4rem; border-radius: 3px; font-size: 0.9em; }
+        pre { background: #1f2937; color: #f9fafb; padding: 1rem; border-radius: 8px; overflow-x: auto; }
+        pre code { background: none; padding: 0; }
+        .alert { padding: 1rem; border-radius: 8px; margin: 1rem 0; border-left: 4px solid; }
+        .alert-info { background: #dbeafe; border-color: #3b82f6; }
+        .alert-success { background: #d1fae5; border-color: #10b981; }
+        .alert-warning { background: #fef3c7; border-color: #f59e0b; }
+        .step { background: #f9fafb; padding: 1rem; margin: 1rem 0; border-left: 4px solid #6366f1; border-radius: 4px; }
+        table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+        th, td { border: 1px solid #e5e7eb; padding: 0.75rem; text-align: left; }
+        th { background: #f3f4f6; font-weight: 600; }
+    </style>
+</head>
+<body>
+    <h1>🚀 Getting Started with Mailrice</h1>
+
+    <div class="alert alert-info">
+        <strong>Welcome to Mailrice!</strong> This guide will help you get your mail server up and running in minutes.
+    </div>
+
+    <h2>📋 Prerequisites</h2>
+    <ul>
+        <li>A fresh Ubuntu 22.04/24.04 or Debian 12 server</li>
+        <li>Minimum 2GB RAM (4GB recommended)</li>
+        <li>Root or sudo access</li>
+        <li>A domain name with DNS access</li>
+        <li>Port 25 open (check with your VPS provider)</li>
+    </ul>
+
+    <h2>⚡ Quick Start</h2>
+
+    <div class="step">
+        <h3>Step 1: Download Deployment Script</h3>
+        <pre><code>wget https://raw.githubusercontent.com/Ayushjain101/Mailrice/main/deploy.sh
+chmod +x deploy.sh</code></pre>
+    </div>
+
+    <div class="step">
+        <h3>Step 2: Run Deployment</h3>
+        <pre><code>./deploy.sh \
+  YOUR_SERVER_IP \
+  ubuntu \
+  "YOUR_SSH_PASSWORD" \
+  yourdomain.com \
+  smtp.yourdomain.com \
+  "" \
+  your-email@cloudflare.com \
+  YOUR_CLOUDFLARE_API_KEY \
+  YOUR_CLOUDFLARE_ZONE_ID</code></pre>
+    </div>
+
+    <div class="step">
+        <h3>Step 3: Wait 8-12 Minutes</h3>
+        <p>The script will automatically:</p>
+        <ul>
+            <li>Install all required packages</li>
+            <li>Configure Postfix, Dovecot, and OpenDKIM</li>
+            <li>Create DNS A records (if Cloudflare creds provided)</li>
+            <li>Obtain SSL certificates</li>
+            <li>Deploy API and Dashboard</li>
+        </ul>
+    </div>
+
+    <div class="step">
+        <h3>Step 4: Access Your Dashboard</h3>
+        <p>Visit: <code>https://wow.yourdomain.com</code></p>
+        <p>Login with your API key from: <code>/root/.mailserver_credentials</code></p>
+    </div>
+
+    <div class="alert alert-success">
+        <strong>✅ Deployment Complete!</strong> Your mail server is now live.
+    </div>
+
+    <h2>🔑 Your Credentials</h2>
+    <p>After deployment, all credentials are saved to <code>/root/.mailserver_credentials</code>:</p>
+    <ul>
+        <li><strong>Initial API Key</strong> - Use this to login to dashboard</li>
+        <li><strong>Master API Key</strong> - Use this to generate additional API keys</li>
+        <li><strong>Database Password</strong> - MySQL root password</li>
+    </ul>
+
+    <h2>📧 Create Your First Mailbox</h2>
+    <p>Using the dashboard:</p>
+    <ol>
+        <li>Click "Add Mailbox" in the navigation</li>
+        <li>Enter email address: <code>sender@yourdomain.com</code></li>
+        <li>Set a strong password</li>
+        <li>Set quota (default: 1000 MB)</li>
+        <li>Click "Create Mailbox"</li>
+    </ol>
+
+    <p>Or using the API:</p>
+    <pre><code>curl -X POST https://smtp.yourdomain.com/api/mailboxes \
+  -H "x-api-key: YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "sender@yourdomain.com",
+    "password": "SecurePassword123!",
+    "quota_mb": 1000
+  }'</code></pre>
+
+    <h2>🌐 Configure DNS Records</h2>
+    <p>Add these DNS records to your domain (available in dashboard under "Domains"):</p>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Type</th>
+                <th>Name</th>
+                <th>Value</th>
+                <th>Purpose</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>A</td>
+                <td>smtp</td>
+                <td>YOUR_SERVER_IP</td>
+                <td>Mail hostname</td>
+            </tr>
+            <tr>
+                <td>A</td>
+                <td>wow</td>
+                <td>YOUR_SERVER_IP</td>
+                <td>Dashboard</td>
+            </tr>
+            <tr>
+                <td>MX</td>
+                <td>@</td>
+                <td>10 smtp.yourdomain.com</td>
+                <td>Mail routing</td>
+            </tr>
+            <tr>
+                <td>TXT</td>
+                <td>mail._domainkey</td>
+                <td>v=DKIM1; k=rsa; p=...</td>
+                <td>DKIM signature</td>
+            </tr>
+            <tr>
+                <td>TXT</td>
+                <td>@</td>
+                <td>v=spf1 ip4:YOUR_IP -all</td>
+                <td>SPF policy</td>
+            </tr>
+            <tr>
+                <td>TXT</td>
+                <td>_dmarc</td>
+                <td>v=DMARC1; p=reject; ...</td>
+                <td>DMARC policy</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <div class="alert alert-warning">
+        <strong>⚠️ Important:</strong> DNS changes can take 5-60 minutes to propagate worldwide.
+    </div>
+
+    <h2>📬 Send Your First Email</h2>
+    <p>Test your setup using SMTP:</p>
+    <pre><code>Host: smtp.yourdomain.com
+Port: 587 (STARTTLS) or 465 (SSL)
+Username: sender@yourdomain.com
+Password: YourMailboxPassword
+Authentication: Required</code></pre>
+
+    <h2>✅ Next Steps</h2>
+    <ul>
+        <li>📚 Read the <a href="/docs/api-reference.html">API Reference</a></li>
+        <li>🌐 Learn about <a href="/docs/dns-configuration.html">DNS Configuration</a></li>
+        <li>📧 Explore <a href="/docs/mailbox-management.html">Mailbox Management</a></li>
+        <li>🔧 Check <a href="/docs/troubleshooting.html">Troubleshooting Guide</a></li>
+    </ul>
+
+    <h2>🆘 Need Help?</h2>
+    <ul>
+        <li>GitHub Issues: <a href="https://github.com/Ayushjain101/Mailrice/issues">Report a problem</a></li>
+        <li>Documentation: <a href="https://github.com/Ayushjain101/Mailrice">View on GitHub</a></li>
+    </ul>
+</body>
+</html>

@@ -404,6 +404,18 @@
         dest: /opt/mailserver-dashboard/js/dashboard.js
         mode: '0644'
 
+    - name: Create Documentation directory
+      file:
+        path: /opt/mailserver-dashboard/docs
+        state: directory
+        mode: '0755'
+
+    - name: Copy Documentation files
+      copy:
+        src: templates/docs/
+        dest: /opt/mailserver-dashboard/docs/
+        mode: '0644'
+
     - name: Create webroot directory for SSL certificate acquisition
       file:
         path: /var/www/html
