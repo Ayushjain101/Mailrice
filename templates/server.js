@@ -170,6 +170,18 @@ function generateSHA512Password(password) {
 }
 const app = express();
 
+// CORS middleware - Allow dashboard to access API
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', 'https://wow.{{ domain }}');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, x-api-key');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  next();
+});
+
 // HTTP request logging
 app.use(morgan('combined'));
 

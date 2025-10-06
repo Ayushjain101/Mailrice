@@ -184,7 +184,7 @@
 
             try {
                 // Test API key by calling a simple endpoint
-                const response = await fetch(window.location.protocol + '//' + window.location.hostname + ':3000/health', {
+                const response = await fetch('https://{{ hostname }}/api/health', {
                     headers: {
                         'x-api-key': apiKey
                     }

@@ -1,7 +1,7 @@
 // Mailrice Dashboard JavaScript
 
 // Configuration
-const API_BASE = window.location.protocol + '//' + window.location.hostname + ':3000';
+const API_BASE = 'https://{{ hostname }}/api';
 let API_KEY = localStorage.getItem('mailrice_api_key');
 let sendingChart = null;
 
