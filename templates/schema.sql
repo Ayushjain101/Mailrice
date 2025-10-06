@@ -7,6 +7,9 @@ CREATE TABLE IF NOT EXISTS virtual_domains (
   dkim_selector VARCHAR(50) DEFAULT 'mail',
   dkim_private_key TEXT,
   dkim_public_key TEXT,
+  spf_record TEXT,
+  dmarc_record TEXT,
+  server_ip VARCHAR(45),
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_name (name),
   INDEX idx_created_at (created_at)

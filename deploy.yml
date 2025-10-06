@@ -572,6 +572,57 @@
         - mailserver-api
         - nginx
 
+    - name: Wait for API to be ready
+      uri:
+        url: "http://localhost:{{ api_port }}/health"
+        method: GET
+        status_code: 200
+      register: api_health
+      until: api_health.status == 200
+      retries: 30
+      delay: 2
+
+    - name: Create initial admin domain via API
+      uri:
+        url: "http://localhost:{{ api_port }}/domains"
+        method: POST
+        headers:
+          x-api-key: "{{ initial_api_key }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          domain: "{{ domain }}"
+          dkim_selector: "mail"
+        status_code: [201, 409]
+      register: domain_creation
+      ignore_errors: yes
+
+    - name: Get DNS records for admin domain
+      uri:
+        url: "http://localhost:{{ api_port }}/domains/{{ domain }}/dns"
+        method: GET
+        headers:
+          x-api-key: "{{ initial_api_key }}"
+        return_content: yes
+      register: dns_records
+      when: domain_creation.status == 201 or domain_creation.status == 409
+
+    - name: Save DNS records to file
+      copy:
+        dest: /root/.mailserver_dns_records
+        mode: '0600'
+        content: |
+          ========================================
+          DNS Records for {{ domain }}
+          ========================================
+
+          {{ dns_records.json.dns_records | to_nice_json }}
+
+          ========================================
+          Copy these records to your DNS provider
+          ========================================
+      when: dns_records is defined and dns_records.json is defined
+
     - name: Save API credentials to file
       copy:
         dest: /root/.mailserver_credentials
@@ -606,15 +657,29 @@
           DB Password: {{ db_password }}
           ========================================
 
+          DNS RECORDS FOR {{ domain }} (saved to /root/.mailserver_dns_records):
+          ========================================
+          {% if dns_records is defined and dns_records.json is defined %}
+          DKIM: {{ dns_records.json.dns_records.dkim }}
+          SPF:  {{ dns_records.json.dns_records.spf }}
+          DMARC: {{ dns_records.json.dns_records.dmarc }}
+          {% else %}
+          Run: curl http://{{ ansible_default_ipv4.address }}:{{ api_port }}/domains/{{ domain }}/dns -H "x-api-key: {{ initial_api_key }}"
+          {% endif %}
+          ========================================
+
           Next Steps:
-          1. Configure DNS: Add A record for {{ hostname }} → {{ ansible_default_ipv4.address }}
-          2. Test API: curl http://{{ ansible_default_ipv4.address }}:{{ api_port }}/health
-          3. Add domain: curl -X POST http://{{ ansible_default_ipv4.address }}:{{ api_port }}/domains -H "x-api-key: {{ initial_api_key }}" -H "Content-Type: application/json" -d '{"domain":"yourdomain.com"}'
-          4. Create mailbox: curl -X POST http://{{ ansible_default_ipv4.address }}:{{ api_port }}/mailboxes -H "x-api-key: {{ initial_api_key }}" -H "Content-Type: application/json" -d '{"email":"user@yourdomain.com","password":"YourSecurePassword123!"}'
-          5. Configure SSL with certbot
+          1. Add DNS records above to your DNS provider
+          2. Add A record: {{ hostname }} → {{ ansible_default_ipv4.address }}
+          3. Wait 5-10 minutes for DNS propagation
+          4. Create mailbox: curl -X POST http://{{ ansible_default_ipv4.address }}:{{ api_port }}/mailboxes -H "x-api-key: {{ initial_api_key }}" -H "Content-Type: application/json" -d '{"email":"user@{{ domain }}","password":"YourSecurePassword123!"}'
+          5. Test email sending
 
           To create additional API keys:
           curl -X POST http://{{ ansible_default_ipv4.address }}:{{ api_port }}/api-keys -H "Content-Type: application/json" -d '{"master_key":"{{ master_api_key }}","description":"My API Key"}'
+
+          To get DNS records later:
+          curl http://{{ ansible_default_ipv4.address }}:{{ api_port }}/domains/{{ domain }}/dns -H "x-api-key: {{ initial_api_key }}"
           ========================================
 
   handlers:

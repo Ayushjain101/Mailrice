@@ -291,6 +291,43 @@ app.post('/api-keys', authLimiter, async (req, res) => {
 app.use(validateApiKey); // API key validation (removed global auth limiter)
 app.use(generalLimiter); // General rate limit applies after successful auth
 
+// Helper function to get server's public IP address
+async function getServerIP() {
+  try {
+    // Try to get IP from environment variable first
+    if (process.env.SERVER_IP) {
+      return process.env.SERVER_IP;
+    }
+
+    // Otherwise, detect from network interface
+    const result = await spawnAsync('hostname', ['-I']);
+    const ips = result.stdout.trim().split(/\s+/);
+
+    // Return first public IP (not localhost)
+    for (const ip of ips) {
+      if (ip && !ip.startsWith('127.') && !ip.startsWith('::1')) {
+        return ip;
+      }
+    }
+
+    throw new Error('Could not detect server IP');
+  } catch (error) {
+    throw new Error(`Failed to get server IP: ${error.message}`);
+  }
+}
+
+// Helper function to generate SPF record
+function generateSPFRecord(serverIP) {
+  // Strict SPF: only this server can send emails
+  return `v=spf1 ip4:${serverIP} -all`;
+}
+
+// Helper function to generate DMARC record with reject policy
+function generateDMARCRecord(domain) {
+  // Strict DMARC policy with reject
+  return `v=DMARC1; p=reject; rua=mailto:dmarc@${domain}; ruf=mailto:dmarc@${domain}; fo=1; adkim=s; aspf=s; pct=100`;
+}
+
 // Helper function to generate DKIM keys
 async function generateDKIMKeys(domain, selector = 'mail') {
   const dkimDir = path.join('/etc/opendkim/keys', domain);
@@ -459,13 +496,20 @@ app.post('/domains', strictLimiter, async (req, res) => {
       return res.status(409).json({ error: 'Domain already exists' });
     }
 
+    // Get server IP
+    const serverIP = await getServerIP();
+
     // Generate DKIM keys
     const dkimKeys = await generateDKIMKeys(domain, dkim_selector);
 
-    // Insert domain into database
+    // Generate SPF and DMARC records
+    const spfRecord = generateSPFRecord(serverIP);
+    const dmarcRecord = generateDMARCRecord(domain);
+
+    // Insert domain into database with SPF and DMARC
     const [result] = await connection.execute(
-      'INSERT INTO virtual_domains (name, dkim_selector, dkim_private_key, dkim_public_key) VALUES (?, ?, ?, ?)',
-      [domain, dkim_selector, dkimKeys.privateKey, dkimKeys.publicKey]
+      'INSERT INTO virtual_domains (name, dkim_selector, dkim_private_key, dkim_public_key, spf_record, dmarc_record, server_ip) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [domain, dkim_selector, dkimKeys.privateKey, dkimKeys.publicKey, spfRecord, dmarcRecord, serverIP]
     );
 
     await connection.commit();
@@ -477,9 +521,14 @@ app.post('/domains', strictLimiter, async (req, res) => {
         name: domain,
         dkim_selector: dkim_selector,
         dkim_public_key: dkimKeys.publicKey,
-        dkim_dns_record: dkimKeys.dnsRecord
+        server_ip: serverIP
       },
-      message: 'Domain added successfully. Add the DKIM DNS record to your DNS provider.'
+      dns_records: {
+        dkim: dkimKeys.dnsRecord,
+        spf: `${domain} IN TXT "${spfRecord}"`,
+        dmarc: `_dmarc.${domain} IN TXT "${dmarcRecord}"`
+      },
+      message: 'Domain added successfully. Add the DNS records to your DNS provider.'
     });
   } catch (error) {
     if (connection) await connection.rollback();
@@ -583,6 +632,34 @@ app.get('/domains/:domain/dkim', async (req, res) => {
       selector: dkim_selector,
       public_key: dkim_public_key,
       dns_record: `${dkim_selector}._domainkey.${req.params.domain} IN TXT "v=DKIM1; k=rsa; p=${dkim_public_key}"`
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get all DNS records (DKIM, SPF, DMARC) for domain
+app.get('/domains/:domain/dns', async (req, res) => {
+  try {
+    const [rows] = await pool.execute(
+      'SELECT dkim_selector, dkim_public_key, spf_record, dmarc_record FROM virtual_domains WHERE name = ?',
+      [req.params.domain]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'Domain not found' });
+    }
+
+    const { dkim_selector, dkim_public_key, spf_record, dmarc_record } = rows[0];
+
+    res.json({
+      domain: req.params.domain,
+      dns_records: {
+        dkim: `${dkim_selector}._domainkey.${req.params.domain} IN TXT "v=DKIM1; k=rsa; p=${dkim_public_key}"`,
+        spf: `${req.params.domain} IN TXT "${spf_record}"`,
+        dmarc: `_dmarc.${req.params.domain} IN TXT "${dmarc_record}"`
+      },
+      message: 'Add these DNS records to your DNS provider for full email authentication'
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
