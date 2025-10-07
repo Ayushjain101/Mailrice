@@ -3,7 +3,7 @@
 **Branch:** V2-Stabalisation
 **Based on:** Phase 1 Implementation Plan
 **Status:** 100% Complete (4 of 4 major improvements)
-**Latest Commit:** TBD (awaiting commit)
+**Latest Commit:** 409467f
 
 ---
 
@@ -299,8 +299,8 @@ Location: /root/.mailrice_backups/backup_1728329472.tar.gz
 | Oct 7 | Step 1: Pre-flight validation | ✅ Done | f00b542 |
 | Oct 7 | Step 2: Retry logic | ✅ Done | f00b542 |
 | Oct 7 | Step 3.1: Deploy logging | ✅ Done | f00b542 |
-| Oct 7 | Step 3.2: Service logging | ✅ Done | TBD |
-| Oct 7 | Step 4: Rollback mechanism | ✅ Done | TBD |
+| Oct 7 | Step 3.2: Service logging | ✅ Done | 409467f |
+| Oct 7 | Step 4: Rollback mechanism | ✅ Done | 409467f |
 | TBD | Testing & verification | ⏳ Next | - |
 | TBD | Push to GitHub | ⏳ Next | - |
 
