@@ -474,7 +474,7 @@
           ttl: 120
           proxied: false
         status_code: [200, 201]
-      when: cf_email != '' and cf_api_key != '' and cf_zone_id != ''
+      when: cf_email is defined and cf_email | length > 0 and cf_api_key is defined and cf_api_key | length > 0 and cf_zone_id is defined and cf_zone_id | length > 0
       ignore_errors: yes
       register: dns_hostname_result
 
@@ -494,7 +494,7 @@
           ttl: 120
           proxied: false
         status_code: [200, 201]
-      when: cf_email != '' and cf_api_key != '' and cf_zone_id != ''
+      when: cf_email is defined and cf_email | length > 0 and cf_api_key is defined and cf_api_key | length > 0 and cf_zone_id is defined and cf_zone_id | length > 0
       ignore_errors: yes
       register: dns_dashboard_result
 
@@ -821,6 +821,7 @@
         enabled: yes
         state: started
       loop:
+        - opendkim
         - postfix
         - dovecot
         - mailserver-api

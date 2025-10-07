@@ -162,7 +162,7 @@ if [ -d "$DEPLOY_DIR" ]; then
   echo -e "${GREEN}✓ Updated to latest version${NC}"
 else
   echo -e "${YELLOW}Cloning deployment repository...${NC}"
-  git clone https://github.com/Ayushjain101/mailserver-deployment.git "$DEPLOY_DIR" > /dev/null 2>&1
+  git clone https://github.com/Ayushjain101/Mailrice.git "$DEPLOY_DIR" > /dev/null 2>&1
   cd "$DEPLOY_DIR"
   echo -e "${GREEN}✓ Repository cloned${NC}"
 fi
@@ -209,6 +209,19 @@ ANSIBLE_CMD="ansible-playbook -i inventory deploy.yml --extra-vars \"domain=$DOM
 # Add db_password if provided
 if [ -n "$DB_PASSWORD" ]; then
   ANSIBLE_CMD="$ANSIBLE_CMD --extra-vars \"db_password=$DB_PASSWORD\""
+fi
+
+# Add Cloudflare credentials if provided
+if [ -n "$CF_EMAIL" ]; then
+  ANSIBLE_CMD="$ANSIBLE_CMD --extra-vars \"cf_email=$CF_EMAIL\""
+fi
+
+if [ -n "$CF_API_KEY" ]; then
+  ANSIBLE_CMD="$ANSIBLE_CMD --extra-vars \"cf_api_key=$CF_API_KEY\""
+fi
+
+if [ -n "$CF_ZONE_ID" ]; then
+  ANSIBLE_CMD="$ANSIBLE_CMD --extra-vars \"cf_zone_id=$CF_ZONE_ID\""
 fi
 
 # Run deployment
