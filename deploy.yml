@@ -705,6 +705,10 @@
       loop:
         - { src: 'templates/server.js', dest: '/opt/mailserver-api/server.js' }
         - { src: 'templates/package.json', dest: '/opt/mailserver-api/package.json' }
+        - { src: 'templates/db.js', dest: '/opt/mailserver-api/db.js' }
+        - { src: 'templates/cache.js', dest: '/opt/mailserver-api/cache.js' }
+        - { src: 'templates/health.js', dest: '/opt/mailserver-api/health.js' }
+        - { src: 'templates/metrics.js', dest: '/opt/mailserver-api/metrics.js' }
 
     - name: Create API .env file
       template:
@@ -776,6 +780,338 @@
         src: templates/mailserver-api.service.j2
         dest: /etc/systemd/system/mailserver-api.service
       notify: restart mailserver-api
+
+    # ============================================================================
+    # PHASE 2: PERFORMANCE & MONITORING (Redis + Prometheus + Grafana)
+    # ============================================================================
+
+    - name: "[PERF] Install Redis server"
+      apt:
+        name:
+          - redis-server
+          - redis-tools
+        state: present
+        update_cache: yes
+
+    - name: "[PERF] Configure Redis for performance"
+      lineinfile:
+        path: /etc/redis/redis.conf
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+        backup: yes
+      loop:
+        - { regexp: '^maxmemory ', line: 'maxmemory 256mb' }
+        - { regexp: '^maxmemory-policy ', line: 'maxmemory-policy allkeys-lru' }
+        - { regexp: '^# *save ', line: '# save disabled for performance' }
+      notify: restart redis
+
+    - name: "[PERF] Start and enable Redis"
+      systemd:
+        name: redis-server
+        state: started
+        enabled: yes
+
+    - name: "[PERF] Add database indexes for performance"
+      community.mysql.mysql_query:
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+        login_db: mailserver
+        query: |
+          CREATE INDEX IF NOT EXISTS idx_domain ON virtual_domains(name);
+          CREATE INDEX IF NOT EXISTS idx_email ON virtual_users(email);
+          CREATE INDEX IF NOT EXISTS idx_domain_mailboxes ON virtual_users(domain_id);
+          CREATE INDEX IF NOT EXISTS idx_api_key ON api_keys(api_key);
+          CREATE INDEX IF NOT EXISTS idx_active_users ON virtual_users(active);
+          ANALYZE TABLE virtual_domains;
+          ANALYZE TABLE virtual_users;
+          ANALYZE TABLE api_keys;
+
+    - name: "[MONITOR] Create prometheus system user"
+      user:
+        name: prometheus
+        system: yes
+        shell: /bin/false
+        create_home: no
+
+    - name: "[MONITOR] Download and install Prometheus"
+      unarchive:
+        src: "https://github.com/prometheus/prometheus/releases/download/v2.45.0/prometheus-2.45.0.linux-amd64.tar.gz"
+        dest: /opt
+        remote_src: yes
+        creates: /opt/prometheus-2.45.0.linux-amd64
+
+    - name: "[MONITOR] Create Prometheus symlink"
+      file:
+        src: /opt/prometheus-2.45.0.linux-amd64
+        dest: /opt/prometheus
+        state: link
+
+    - name: "[MONITOR] Create Prometheus directories"
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: prometheus
+        group: prometheus
+        mode: '0755'
+      loop:
+        - /etc/prometheus
+        - /etc/prometheus/rules
+        - /var/lib/prometheus
+
+    - name: "[MONITOR] Copy Prometheus configuration"
+      template:
+        src: templates/prometheus.yml.j2
+        dest: /etc/prometheus/prometheus.yml
+        owner: prometheus
+        group: prometheus
+        mode: '0644'
+      notify: restart prometheus
+
+    - name: "[MONITOR] Copy Prometheus alert rules"
+      copy:
+        src: templates/alert_rules.yml
+        dest: /etc/prometheus/rules/alert_rules.yml
+        owner: prometheus
+        group: prometheus
+        mode: '0644'
+      notify: restart prometheus
+
+    - name: "[MONITOR] Create Prometheus systemd service"
+      copy:
+        content: |
+          [Unit]
+          Description=Prometheus Monitoring System
+          Documentation=https://prometheus.io/docs/introduction/overview/
+          After=network.target
+
+          [Service]
+          Type=simple
+          User=prometheus
+          Group=prometheus
+          ExecStart=/opt/prometheus/prometheus \
+            --config.file=/etc/prometheus/prometheus.yml \
+            --storage.tsdb.path=/var/lib/prometheus/ \
+            --web.listen-address=:9090 \
+            --storage.tsdb.retention.time=30d \
+            --web.console.templates=/opt/prometheus/consoles \
+            --web.console.libraries=/opt/prometheus/console_libraries
+          Restart=always
+          RestartSec=5
+
+          [Install]
+          WantedBy=multi-user.target
+        dest: /etc/systemd/system/prometheus.service
+        mode: '0644'
+      notify: reload systemd
+
+    - name: "[MONITOR] Start and enable Prometheus"
+      systemd:
+        name: prometheus
+        state: started
+        enabled: yes
+        daemon_reload: yes
+
+    - name: "[MONITOR] Download and install Node Exporter"
+      unarchive:
+        src: "https://github.com/prometheus/node_exporter/releases/download/v1.6.1/node_exporter-1.6.1.linux-amd64.tar.gz"
+        dest: /opt
+        remote_src: yes
+        creates: /opt/node_exporter-1.6.1.linux-amd64
+
+    - name: "[MONITOR] Create Node Exporter symlink"
+      file:
+        src: /opt/node_exporter-1.6.1.linux-amd64
+        dest: /opt/node_exporter
+        state: link
+
+    - name: "[MONITOR] Create Node Exporter systemd service"
+      copy:
+        content: |
+          [Unit]
+          Description=Node Exporter
+          After=network.target
+
+          [Service]
+          Type=simple
+          User=prometheus
+          ExecStart=/opt/node_exporter/node_exporter \
+            --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|var/lib/docker/.+)($|/) \
+            --collector.netclass.ignored-devices=^(veth.*|docker.*|br.*)$
+          Restart=always
+
+          [Install]
+          WantedBy=multi-user.target
+        dest: /etc/systemd/system/node_exporter.service
+        mode: '0644'
+      notify: reload systemd
+
+    - name: "[MONITOR] Start and enable Node Exporter"
+      systemd:
+        name: node_exporter
+        state: started
+        enabled: yes
+        daemon_reload: yes
+
+    - name: "[MONITOR] Download and install Redis Exporter"
+      get_url:
+        url: "https://github.com/oliver006/redis_exporter/releases/download/v1.55.0/redis_exporter-v1.55.0.linux-amd64.tar.gz"
+        dest: /tmp/redis_exporter.tar.gz
+
+    - name: "[MONITOR] Extract Redis Exporter"
+      unarchive:
+        src: /tmp/redis_exporter.tar.gz
+        dest: /opt
+        remote_src: yes
+        creates: /opt/redis_exporter-v1.55.0.linux-amd64
+
+    - name: "[MONITOR] Create Redis Exporter symlink"
+      file:
+        src: /opt/redis_exporter-v1.55.0.linux-amd64/redis_exporter
+        dest: /usr/local/bin/redis_exporter
+        state: link
+
+    - name: "[MONITOR] Create Redis Exporter systemd service"
+      copy:
+        content: |
+          [Unit]
+          Description=Redis Exporter
+          After=network.target redis.service
+
+          [Service]
+          Type=simple
+          User=prometheus
+          ExecStart=/usr/local/bin/redis_exporter \
+            --redis.addr=localhost:6379 \
+            --web.listen-address=:9121
+          Restart=always
+
+          [Install]
+          WantedBy=multi-user.target
+        dest: /etc/systemd/system/redis_exporter.service
+        mode: '0644'
+      notify: reload systemd
+
+    - name: "[MONITOR] Start and enable Redis Exporter"
+      systemd:
+        name: redis_exporter
+        state: started
+        enabled: yes
+        daemon_reload: yes
+
+    - name: "[MONITOR] Download and install MySQL Exporter"
+      get_url:
+        url: "https://github.com/prometheus/mysqld_exporter/releases/download/v0.15.0/mysqld_exporter-0.15.0.linux-amd64.tar.gz"
+        dest: /tmp/mysqld_exporter.tar.gz
+
+    - name: "[MONITOR] Extract MySQL Exporter"
+      unarchive:
+        src: /tmp/mysqld_exporter.tar.gz
+        dest: /opt
+        remote_src: yes
+        creates: /opt/mysqld_exporter-0.15.0.linux-amd64
+
+    - name: "[MONITOR] Create MySQL Exporter symlink"
+      file:
+        src: /opt/mysqld_exporter-0.15.0.linux-amd64/mysqld_exporter
+        dest: /usr/local/bin/mysqld_exporter
+        state: link
+
+    - name: "[MONITOR] Create MySQL Exporter config"
+      copy:
+        content: |
+          [client]
+          user=root
+          socket=/var/run/mysqld/mysqld.sock
+        dest: /etc/.mysqld_exporter.cnf
+        owner: prometheus
+        group: prometheus
+        mode: '0600'
+
+    - name: "[MONITOR] Create MySQL Exporter systemd service"
+      copy:
+        content: |
+          [Unit]
+          Description=MySQL Exporter
+          After=network.target mariadb.service
+
+          [Service]
+          Type=simple
+          User=prometheus
+          ExecStart=/usr/local/bin/mysqld_exporter \
+            --config.my-cnf=/etc/.mysqld_exporter.cnf \
+            --web.listen-address=:9104
+          Restart=always
+
+          [Install]
+          WantedBy=multi-user.target
+        dest: /etc/systemd/system/mysqld_exporter.service
+        mode: '0644'
+      notify: reload systemd
+
+    - name: "[MONITOR] Start and enable MySQL Exporter"
+      systemd:
+        name: mysqld_exporter
+        state: started
+        enabled: yes
+        daemon_reload: yes
+
+    - name: "[MONITOR] Add Grafana APT key"
+      apt_key:
+        url: https://packages.grafana.com/gpg.key
+        state: present
+
+    - name: "[MONITOR] Add Grafana repository"
+      apt_repository:
+        repo: "deb https://packages.grafana.com/oss/deb stable main"
+        state: present
+        filename: grafana
+
+    - name: "[MONITOR] Install Grafana"
+      apt:
+        name: grafana
+        state: present
+        update_cache: yes
+
+    - name: "[MONITOR] Configure Grafana"
+      template:
+        src: templates/grafana.ini.j2
+        dest: /etc/grafana/grafana.ini
+        owner: root
+        group: grafana
+        mode: '0640'
+      notify: restart grafana
+
+    - name: "[MONITOR] Start and enable Grafana"
+      systemd:
+        name: grafana-server
+        state: started
+        enabled: yes
+
+    - name: "[MONITOR] Wait for Grafana to start"
+      wait_for:
+        port: 3001
+        delay: 5
+        timeout: 60
+
+    - name: "[MONITOR] Add Prometheus datasource to Grafana"
+      uri:
+        url: http://localhost:3001/api/datasources
+        method: POST
+        user: admin
+        password: "{{ db_password }}"
+        force_basic_auth: yes
+        body_format: json
+        body:
+          name: "Prometheus"
+          type: "prometheus"
+          url: "http://localhost:9090"
+          access: "proxy"
+          isDefault: true
+        status_code: [200, 409]
+      ignore_errors: yes
+
+    # ============================================================================
+    # END PHASE 2
+    # ============================================================================
 
     - name: Create Dashboard directory
       file:
@@ -1433,6 +1769,21 @@
     - name: restart rsyslog
       systemd:
         name: rsyslog
+        state: restarted
+
+    - name: restart redis
+      systemd:
+        name: redis-server
+        state: restarted
+
+    - name: restart prometheus
+      systemd:
+        name: prometheus
+        state: restarted
+
+    - name: restart grafana
+      systemd:
+        name: grafana-server
         state: restarted
 
     - name: rollback deployment
