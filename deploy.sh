@@ -190,9 +190,7 @@ elif [[ "$SSH_AUTH" =~ ^~/.* ]] && [ -f "${SSH_AUTH/#\~/$HOME}" ]; then
   echo -e "${GREEN}✓ Using SSH key authentication (secure)${NC}"
 else
   SSH_PASS="$SSH_AUTH"
-  log "WARNING" "Using password authentication (not recommended for production)"
-  echo -e "${YELLOW}⚠ Warning: Using password authentication (not recommended for production)${NC}"
-  echo -e "${YELLOW}  For better security, consider using SSH key authentication instead.${NC}"
+  log "INFO" "Using password authentication"
 fi
 
 # Check if Cloudflare DNS automation is enabled
@@ -349,7 +347,7 @@ else
 [mailserver]
 $SERVER_IP ansible_user=$SSH_USER ansible_ssh_pass=$SSH_PASS ansible_become=yes ansible_become_pass=$SSH_PASS
 EOF
-  log "WARNING" "Inventory created with password authentication (credentials in plaintext)"
+  log "INFO" "Inventory created with password authentication"
 fi
 echo -e "${GREEN}✓ Inventory created${NC}"
 
