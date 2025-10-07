@@ -1232,12 +1232,14 @@
               }
           }
         mode: '0644'
+      notify: restart nginx
 
     - name: Enable temporary nginx config
       file:
         src: /etc/nginx/sites-available/certbot-temp
         dest: /etc/nginx/sites-enabled/certbot-temp
         state: link
+      notify: restart nginx
 
     - name: Configure Nginx for Dashboard subdomain
       template:
