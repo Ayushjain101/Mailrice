@@ -1,0 +1,55 @@
+# Nginx HTTP-only configuration for Mail Server API
+# This configuration is used when SSL certificates are not available
+# Serves API over HTTP on port 80
+
+server {
+    listen 80;
+    server_name {{ hostname }};
+
+    # ACME challenge for Let's Encrypt (allows future SSL certificate acquisition)
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+
+    # Access and error logs
+    access_log /var/log/nginx/mailserver-api-access.log;
+    error_log /var/log/nginx/mailserver-api-error.log;
+
+    # API endpoint
+    location /api/ {
+        rewrite ^/api/(.*) /$1 break;
+        proxy_pass http://127.0.0.1:{{ api_port }};
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Port $server_port;
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+        proxy_buffering off;
+        proxy_request_buffering off;
+    }
+
+    # Health check endpoint
+    location /health {
+        proxy_pass http://127.0.0.1:{{ api_port }}/health;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        access_log off;
+    }
+
+    # Basic security headers (HSTS excluded for HTTP)
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+
+    # Deny access to hidden files
+    location ~ /\. {
+        deny all;
+        access_log off;
+        log_not_found off;
+    }
+}

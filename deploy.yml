@@ -1270,6 +1270,36 @@
         port: 80
         timeout: 30
 
+    # Deploy HTTP-only configurations first (always succeeds, non-blocking)
+    - name: "[HTTP] Configure Nginx HTTP-only for API"
+      template:
+        src: templates/nginx-api-http.conf.j2
+        dest: /etc/nginx/sites-available/mailserver-api
+      notify: restart nginx
+
+    - name: "[HTTP] Enable API Nginx site (HTTP)"
+      file:
+        src: /etc/nginx/sites-available/mailserver-api
+        dest: /etc/nginx/sites-enabled/mailserver-api
+        state: link
+      notify: restart nginx
+
+    - name: "[HTTP] Configure Nginx HTTP-only for Dashboard"
+      template:
+        src: templates/nginx-dashboard-http.conf.j2
+        dest: /etc/nginx/sites-available/mailserver-dashboard
+      notify: restart nginx
+
+    - name: "[HTTP] Enable Dashboard Nginx site (HTTP)"
+      file:
+        src: /etc/nginx/sites-available/mailserver-dashboard
+        dest: /etc/nginx/sites-enabled/mailserver-dashboard
+        state: link
+      notify: restart nginx
+
+    - name: Force Nginx restart with HTTP configs
+      meta: flush_handlers
+
     - name: "[SSL] Obtain Let's Encrypt SSL certificate for mail hostname (with retry - Phase 1)"
       shell: |
         certbot certonly --webroot \
@@ -1286,6 +1316,10 @@
       retries: 3
       delay: 30
       ignore_errors: yes
+
+    - name: "[SSL] Log SSL certificate status for API"
+      debug:
+        msg: "SSL certificate acquisition {{ 'SUCCEEDED' if certbot_result is succeeded else 'FAILED - continuing with HTTP' }}"
 
     - name: "[SSL] Obtain Let's Encrypt SSL certificate for dashboard (with retry - Phase 1)"
       shell: |
@@ -1304,35 +1338,35 @@
       delay: 30
       ignore_errors: yes
 
-    - name: Configure Nginx for Dashboard subdomain
-      template:
-        src: templates/nginx-dashboard.conf.j2
-        dest: /etc/nginx/sites-available/mailserver-dashboard
-      notify: restart nginx
-      when: certbot_dashboard_result is succeeded
+    - name: "[SSL] Log SSL certificate status for Dashboard"
+      debug:
+        msg: "SSL certificate acquisition {{ 'SUCCEEDED' if certbot_dashboard_result is succeeded else 'FAILED - continuing with HTTP' }}"
 
-    - name: Enable Dashboard Nginx site
-      file:
-        src: /etc/nginx/sites-available/mailserver-dashboard
-        dest: /etc/nginx/sites-enabled/mailserver-dashboard
-        state: link
-      notify: restart nginx
-      when: certbot_dashboard_result is succeeded
-
-    - name: Configure Nginx reverse proxy for API
+    # Upgrade to HTTPS only if SSL succeeded
+    - name: "[HTTPS] Upgrade Nginx to HTTPS for API"
       template:
         src: templates/nginx-api.conf.j2
         dest: /etc/nginx/sites-available/mailserver-api
       notify: restart nginx
       when: certbot_result is succeeded
 
-    - name: Enable Nginx site
-      file:
-        src: /etc/nginx/sites-available/mailserver-api
-        dest: /etc/nginx/sites-enabled/mailserver-api
-        state: link
+    - name: "[HTTPS] Upgrade Nginx to HTTPS for Dashboard"
+      template:
+        src: templates/nginx-dashboard.conf.j2
+        dest: /etc/nginx/sites-available/mailserver-dashboard
       notify: restart nginx
-      when: certbot_result is succeeded
+      when: certbot_dashboard_result is succeeded
+
+    - name: "[INFO] Display SSL Configuration Summary"
+      debug:
+        msg:
+          - "============================================"
+          - "SSL/TLS Configuration Summary"
+          - "============================================"
+          - "API ({{ hostname }}): {{ 'HTTPS Enabled ✓' if certbot_result is succeeded else 'HTTP Only (SSL acquisition failed)' }}"
+          - "Dashboard (wow.{{ domain }}): {{ 'HTTPS Enabled ✓' if certbot_dashboard_result is succeeded else 'HTTP Only (SSL acquisition failed)' }}"
+          - "{{ 'NOTE: Services are running over HTTP. HTTPS upgrade can be attempted manually using certbot.' if (certbot_result is failed and certbot_dashboard_result is failed) else '' }}"
+          - "============================================"
 
     - name: Reload Nginx after SSL certificate acquisition
       systemd:

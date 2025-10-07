@@ -1,0 +1,46 @@
+# Nginx HTTP-only configuration for Mailrice Dashboard
+# This configuration is used when SSL certificates are not available
+# Serves dashboard over HTTP on port 80
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name wow.{{ domain }};
+
+    # Let's Encrypt challenge (allows future SSL certificate acquisition)
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+
+    # Dashboard root
+    root /opt/mailserver-dashboard;
+    index index.html login.html;
+
+    # Serve static files
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # CSS files
+    location /css/ {
+        alias /opt/mailserver-dashboard/css/;
+        expires 7d;
+        add_header Cache-Control "public, immutable";
+    }
+
+    # JS files
+    location /js/ {
+        alias /opt/mailserver-dashboard/js/;
+        expires 7d;
+        add_header Cache-Control "public, immutable";
+    }
+
+    # Basic security headers (HSTS excluded for HTTP)
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+
+    # Access and error logs
+    access_log /var/log/nginx/dashboard-access.log;
+    error_log /var/log/nginx/dashboard-error.log;
+}
