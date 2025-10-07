@@ -1167,6 +1167,20 @@
         state: directory
         mode: '0755'
 
+    # Clean up any existing SSL-enabled nginx configs from previous deployments
+    # This prevents nginx from failing to start when SSL certs don't exist yet
+    - name: Disable Dashboard Nginx site if exists (cleanup from previous deployment)
+      file:
+        path: /etc/nginx/sites-enabled/mailserver-dashboard
+        state: absent
+      ignore_errors: yes
+
+    - name: Disable API Nginx site if exists (cleanup from previous deployment)
+      file:
+        path: /etc/nginx/sites-enabled/mailserver-api
+        state: absent
+      ignore_errors: yes
+
     - name: Create DNS A record for mail hostname via Cloudflare
       uri:
         url: "https://api.cloudflare.com/client/v4/zones/{{ cf_zone_id }}/dns_records"
