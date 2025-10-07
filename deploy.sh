@@ -12,8 +12,48 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
+# ========== LOGGING CONFIGURATION (Phase 1 - V2 Stabalisation) ==========
+DEPLOY_LOG_DIR="/var/log/mailrice"
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+DEPLOY_LOG="${DEPLOY_LOG_DIR}/deployment_${TIMESTAMP}.log"
+DEPLOY_SUMMARY="${DEPLOY_LOG_DIR}/deployment_summary.txt"
+
+# Create log directory
+mkdir -p "$DEPLOY_LOG_DIR" 2>/dev/null || {
+    echo -e "${YELLOW}Warning: Cannot create $DEPLOY_LOG_DIR, using /tmp${NC}"
+    DEPLOY_LOG_DIR="/tmp/mailrice_logs"
+    DEPLOY_LOG="${DEPLOY_LOG_DIR}/deployment_${TIMESTAMP}.log"
+    DEPLOY_SUMMARY="${DEPLOY_LOG_DIR}/deployment_summary.txt"
+    mkdir -p "$DEPLOY_LOG_DIR"
+}
+
+# Logging function
+log() {
+    local level="$1"
+    shift
+    local message="$*"
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+
+    echo "[$timestamp] [$level] $message" >> "$DEPLOY_LOG"
+
+    # Also display to console with colors
+    case "$level" in
+        INFO)  echo -e "${BLUE}[$timestamp] [INFO]${NC} $message" ;;
+        SUCCESS) echo -e "${GREEN}[$timestamp] [SUCCESS]${NC} $message" ;;
+        WARNING) echo -e "${YELLOW}[$timestamp] [WARNING]${NC} $message" ;;
+        ERROR)   echo -e "${RED}[$timestamp] [ERROR]${NC} $message" ;;
+        *)       echo -e "[$timestamp] $message" ;;
+    esac
+}
+
+# Start logging
+log "INFO" "========================================="
+log "INFO" "Mailrice Deployment Started (V2 Stabalisation)"
+log "INFO" "========================================="
+log "INFO" "Log file: $DEPLOY_LOG"
+
 echo -e "${GREEN}========================================${NC}"
-echo -e "${GREEN}  Mail Server Auto-Deploy${NC}"
+echo -e "${GREEN}  Mail Server Auto-Deploy (V2)${NC}"
 echo -e "${GREEN}========================================${NC}"
 
 # Parse arguments
@@ -225,10 +265,116 @@ if [ -n "$CF_ZONE_ID" ]; then
 fi
 
 # Run deployment
-eval $ANSIBLE_CMD
+log "INFO" "Starting Ansible playbook execution"
+log "INFO" "Target: $SERVER_IP | Domain: $DOMAIN | Hostname: $HOSTNAME"
+eval $ANSIBLE_CMD 2>&1 | tee -a "$DEPLOY_LOG"
+ANSIBLE_EXIT_CODE=${PIPESTATUS[0]}
 
 # Check deployment success
-if [ $? -eq 0 ]; then
+if [ $ANSIBLE_EXIT_CODE -eq 0 ]; then
+  log "SUCCESS" "Ansible playbook completed successfully"
+
+  # Generate deployment summary
+  cat > "$DEPLOY_SUMMARY" << SUMMARY_EOF
+========================================
+MAILRICE DEPLOYMENT SUMMARY
+========================================
+Timestamp: $(date)
+Status: ✅ SUCCESS
+Version: V2 Stabalisation (Phase 1)
+
+Server Information:
+- IP Address: $SERVER_IP
+- SSH User: $SSH_USER
+- Domain: $DOMAIN
+- Hostname: $HOSTNAME
+
+Configuration:
+- DNS Automation: $([ "$AUTO_DNS" = true ] && echo "✅ Enabled (Cloudflare)" || echo "❌ Disabled (Manual)")
+- Database Password: $([ -n "$DB_PASSWORD" ] && echo "Custom" || echo "Auto-generated")
+
+Deployment Log: $DEPLOY_LOG
+Summary: $DEPLOY_SUMMARY
+
+✅ Pre-flight validation passed
+✅ All packages installed with retry logic
+✅ Services started successfully
+✅ Centralized logging enabled
+
+Next Steps:
+1. Verify services: ssh $SSH_USER@$SERVER_IP 'systemctl status postfix dovecot mysql'
+2. Check logs: ssh $SSH_USER@$SERVER_IP 'tail -100 /var/log/mailrice/deployment.log'
+3. Test DNS propagation (if using Cloudflare)
+4. Access dashboard: https://wow.$DOMAIN
+5. Create test mailbox via API
+
+Logs Location (on server):
+- Deployment: /var/log/mailrice/deployment.log
+- Postfix: /var/log/mailrice/postfix.log
+- Dovecot: /var/log/mailrice/dovecot.log
+- API: /var/log/mailrice/api.log
+
+Full deployment log: $DEPLOY_LOG
+========================================
+SUMMARY_EOF
+
+  log "SUCCESS" "Deployment summary saved to: $DEPLOY_SUMMARY"
+  log "INFO" "Full deployment log: $DEPLOY_LOG"
+
+  # Display summary to user
+  cat "$DEPLOY_SUMMARY"
+
+else
+  log "ERROR" "Ansible playbook failed with exit code $ANSIBLE_EXIT_CODE"
+  log "ERROR" "Check deployment log: $DEPLOY_LOG"
+
+  # Generate failure summary
+  cat > "$DEPLOY_SUMMARY" << SUMMARY_EOF
+========================================
+MAILRICE DEPLOYMENT FAILED
+========================================
+Timestamp: $(date)
+Status: ❌ FAILED
+Exit Code: $ANSIBLE_EXIT_CODE
+Version: V2 Stabalisation (Phase 1)
+
+Server Information:
+- IP Address: $SERVER_IP
+- Domain: $DOMAIN
+- Hostname: $HOSTNAME
+
+Troubleshooting:
+1. Review deployment log: $DEPLOY_LOG
+2. Check Ansible output above for specific errors
+3. Verify server connectivity: ssh $SSH_USER@$SERVER_IP
+4. Check system resources: ssh $SSH_USER@$SERVER_IP 'free -h && df -h'
+5. Review pre-flight validation results in log
+
+Common Issues:
+- Insufficient memory or disk space (check pre-flight validation)
+- Network connectivity problems
+- Package repository issues
+- Port conflicts (check pre-flight warnings)
+- DNS not propagated (for Cloudflare automation)
+
+Full deployment log: $DEPLOY_LOG
+
+For support:
+- GitHub: https://github.com/Ayushjain101/Mailrice/issues
+- Review PHASE1_IMPLEMENTATION_PLAN.md for troubleshooting guide
+========================================
+SUMMARY_EOF
+
+  log "ERROR" "Deployment summary saved to: $DEPLOY_SUMMARY"
+
+  # Display failure summary
+  cat "$DEPLOY_SUMMARY"
+
+  exit $ANSIBLE_EXIT_CODE
+fi
+
+# Continue with original success path
+if [ $ANSIBLE_EXIT_CODE -eq 0 ]; then
   echo ""
   echo -e "${GREEN}========================================${NC}"
   echo -e "${GREEN}  ✓ Deployment Successful!${NC}"
