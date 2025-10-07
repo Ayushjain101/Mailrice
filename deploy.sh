@@ -31,22 +31,25 @@ set -e
 #   ✓ Rollback Mechanism - Automatic backup and restore on failure
 #
 # USAGE:
-#   ./deploy.sh <server_ip> <ssh_user> <ssh_password> <domain> <hostname> [db_password] [cf_email] [cf_api_key] [cf_zone_id] [email_recipient]
+#   ./deploy.sh <server_ip> <ssh_user> <ssh_auth> <domain> <hostname> [db_password] [cf_email] [cf_api_key] [cf_zone_id] [email_recipient]
 #
 # EXAMPLES:
-#   Basic deployment:
+#   Basic deployment with SSH key (recommended):
+#     ./deploy.sh 1.2.3.4 ubuntu ~/.ssh/id_rsa example.com mail.example.com
+#
+#   Basic deployment with password (not recommended):
 #     ./deploy.sh 1.2.3.4 ubuntu mypass example.com mail.example.com
 #
 #   With Cloudflare DNS automation:
-#     ./deploy.sh 1.2.3.4 ubuntu pass example.com mail.example.com dbpass you@email.com cf_key zone_id
+#     ./deploy.sh 1.2.3.4 ubuntu ~/.ssh/id_rsa example.com mail.example.com dbpass you@email.com cf_key zone_id
 #
 #   With email notification:
-#     ./deploy.sh 1.2.3.4 ubuntu pass example.com mail.example.com '' you@email.com cf_key zone_id recipient@email.com
+#     ./deploy.sh 1.2.3.4 ubuntu ~/.ssh/id_rsa example.com mail.example.com '' you@email.com cf_key zone_id recipient@email.com
 #
 # PARAMETERS:
 #   server_ip       - IP address of target server (Ubuntu 20.04/22.04 recommended)
 #   ssh_user        - SSH username (usually 'ubuntu' or 'root')
-#   ssh_password    - SSH password for authentication
+#   ssh_auth        - SSH key path (recommended, e.g., ~/.ssh/id_rsa) OR password (not recommended)
 #   domain          - Your domain name (e.g., example.com)
 #   hostname        - Mail server FQDN (e.g., mail.example.com)
 #   db_password     - [Optional] MySQL password (auto-generated if empty)
@@ -123,7 +126,7 @@ echo -e "${GREEN}========================================${NC}"
 # Parse arguments
 SERVER_IP="${1:-}"
 SSH_USER="${2:-}"
-SSH_PASS="${3:-}"
+SSH_AUTH="${3:-}"
 DOMAIN="${4:-}"
 HOSTNAME="${5:-}"
 DB_PASSWORD="${6:-}"
@@ -133,24 +136,27 @@ CF_ZONE_ID="${9:-}"
 EMAIL_RECIPIENT="${10:-}"
 
 # Validate required arguments
-if [ -z "$SERVER_IP" ] || [ -z "$SSH_USER" ] || [ -z "$SSH_PASS" ] || [ -z "$DOMAIN" ] || [ -z "$HOSTNAME" ]; then
+if [ -z "$SERVER_IP" ] || [ -z "$SSH_USER" ] || [ -z "$SSH_AUTH" ] || [ -z "$DOMAIN" ] || [ -z "$HOSTNAME" ]; then
   echo -e "${RED}Error: Missing required arguments${NC}"
   echo ""
-  echo "Usage: $0 <server_ip> <ssh_user> <ssh_password> <domain> <hostname> [db_password] [cf_email] [cf_api_key] [cf_zone_id] [email_recipient]"
+  echo "Usage: $0 <server_ip> <ssh_user> <ssh_auth> <domain> <hostname> [db_password] [cf_email] [cf_api_key] [cf_zone_id] [email_recipient]"
   echo ""
-  echo "Example (Basic):"
+  echo "Example (Basic with SSH key - recommended):"
+  echo "  $0 1.2.3.4 ubuntu ~/.ssh/id_rsa example.com mail.example.com"
+  echo ""
+  echo "Example (Basic with password - not recommended):"
   echo "  $0 1.2.3.4 ubuntu mypassword example.com mail.example.com"
   echo ""
   echo "Example (With Auto-DNS via Cloudflare):"
-  echo "  $0 1.2.3.4 ubuntu pass example.com mail.example.com dbpass123 you@email.com cf_api_key zone_id"
+  echo "  $0 1.2.3.4 ubuntu ~/.ssh/id_rsa example.com mail.example.com dbpass123 you@email.com cf_api_key zone_id"
   echo ""
   echo "Example (With Email Notification):"
-  echo "  $0 1.2.3.4 ubuntu pass example.com mail.example.com '' you@email.com cf_api_key zone_id recipient@email.com"
+  echo "  $0 1.2.3.4 ubuntu ~/.ssh/id_rsa example.com mail.example.com '' you@email.com cf_api_key zone_id recipient@email.com"
   echo ""
   echo "Arguments:"
   echo "  server_ip        - Target server IP address"
   echo "  ssh_user         - SSH username (usually 'ubuntu' or 'root')"
-  echo "  ssh_password     - SSH password"
+  echo "  ssh_auth         - SSH key path (recommended, e.g., ~/.ssh/id_rsa) OR password (not recommended)"
   echo "  domain           - Your domain (e.g., example.com)"
   echo "  hostname         - Mail server hostname (e.g., mail.example.com)"
   echo "  db_password      - Optional: Database password (auto-generated if not provided)"
@@ -159,10 +165,34 @@ if [ -z "$SERVER_IP" ] || [ -z "$SSH_USER" ] || [ -z "$SSH_PASS" ] || [ -z "$DOM
   echo "  cf_zone_id       - Optional: Cloudflare Zone ID (for auto DNS)"
   echo "  email_recipient  - Optional: Email address to send deployment documentation"
   echo ""
+  echo "Note: SSH key authentication is more secure than password authentication!"
   echo "Note: If Cloudflare credentials are provided, DNS records will be configured automatically!"
   echo "Note: If email_recipient is provided, deployment documentation will be sent via email!"
   echo ""
   exit 1
+fi
+
+# Detect SSH authentication method
+USE_SSH_KEY=false
+SSH_KEY_PATH=""
+SSH_PASS=""
+
+# Check if SSH_AUTH is a file (SSH key) or a string (password)
+if [ -f "$SSH_AUTH" ]; then
+  USE_SSH_KEY=true
+  SSH_KEY_PATH="$SSH_AUTH"
+  log "INFO" "Using SSH key authentication: $SSH_KEY_PATH"
+  echo -e "${GREEN}✓ Using SSH key authentication (secure)${NC}"
+elif [[ "$SSH_AUTH" =~ ^~/.* ]] && [ -f "${SSH_AUTH/#\~/$HOME}" ]; then
+  USE_SSH_KEY=true
+  SSH_KEY_PATH="${SSH_AUTH/#\~/$HOME}"
+  log "INFO" "Using SSH key authentication: $SSH_KEY_PATH"
+  echo -e "${GREEN}✓ Using SSH key authentication (secure)${NC}"
+else
+  SSH_PASS="$SSH_AUTH"
+  log "WARNING" "Using password authentication (not recommended for production)"
+  echo -e "${YELLOW}⚠ Warning: Using password authentication (not recommended for production)${NC}"
+  echo -e "${YELLOW}  For better security, consider using SSH key authentication instead.${NC}"
 fi
 
 # Check if Cloudflare DNS automation is enabled
@@ -233,50 +263,94 @@ else
   echo -e "${GREEN}✓ Ansible already installed ($(ansible --version | head -1))${NC}"
 fi
 
-# Check and install sshpass
-echo -e "\n${BLUE}Checking sshpass...${NC}"
-if ! command -v sshpass &> /dev/null; then
-  echo -e "${YELLOW}sshpass not found. Installing...${NC}"
-  case $OS in
-    macos)
-      if ! command -v brew &> /dev/null; then
-        echo -e "${YELLOW}Installing Homebrew first...${NC}"
-        /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-      fi
-      brew install hudochenkov/sshpass/sshpass
-      ;;
-    linux|wsl)
-      sudo apt-get update -qq
-      sudo apt-get install -y sshpass
-      ;;
-  esac
-  echo -e "${GREEN}✓ sshpass installed${NC}"
+# Check and install sshpass (only if using password authentication)
+if [ "$USE_SSH_KEY" = false ]; then
+  echo -e "\n${BLUE}Checking sshpass...${NC}"
+  if ! command -v sshpass &> /dev/null; then
+    echo -e "${YELLOW}sshpass not found. Installing...${NC}"
+    case $OS in
+      macos)
+        if ! command -v brew &> /dev/null; then
+          echo -e "${YELLOW}Installing Homebrew first...${NC}"
+          /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+        fi
+        brew install hudochenkov/sshpass/sshpass
+        ;;
+      linux|wsl)
+        sudo apt-get update -qq
+        sudo apt-get install -y sshpass
+        ;;
+    esac
+    echo -e "${GREEN}✓ sshpass installed${NC}"
+  else
+    echo -e "${GREEN}✓ sshpass already installed${NC}"
+  fi
 else
-  echo -e "${GREEN}✓ sshpass already installed${NC}"
+  echo -e "\n${GREEN}✓ Using SSH key authentication - sshpass not required${NC}"
 fi
 
-# Clone or update repository
+# Clone or update repository (detect if already in git repo)
 echo -e "\n${BLUE}Setting up deployment files...${NC}"
-DEPLOY_DIR="$HOME/mailserver-deployment"
 
-if [ -d "$DEPLOY_DIR" ]; then
-  echo -e "${YELLOW}Deployment directory exists. Updating...${NC}"
-  cd "$DEPLOY_DIR"
-  git pull origin main > /dev/null 2>&1
-  echo -e "${GREEN}✓ Updated to latest version${NC}"
+# Check if current directory is already a Mailrice git repository
+if git rev-parse --is-inside-work-tree > /dev/null 2>&1; then
+  CURRENT_REPO=$(git rev-parse --show-toplevel 2>/dev/null)
+  CURRENT_REMOTE=$(git config --get remote.origin.url 2>/dev/null || echo "")
+
+  # Check if we're in the Mailrice repo
+  if [[ "$CURRENT_REMOTE" == *"Mailrice"* ]] || [[ "$CURRENT_REMOTE" == *"mailrice"* ]]; then
+    DEPLOY_DIR="$CURRENT_REPO"
+    echo -e "${GREEN}✓ Using current directory: $DEPLOY_DIR${NC}"
+    log "INFO" "Using existing Mailrice repository at: $DEPLOY_DIR"
+  else
+    # Not in Mailrice repo, use default location
+    DEPLOY_DIR="$HOME/mailserver-deployment"
+    if [ -d "$DEPLOY_DIR" ]; then
+      echo -e "${YELLOW}Deployment directory exists. Updating...${NC}"
+      cd "$DEPLOY_DIR"
+      git pull origin main > /dev/null 2>&1
+      echo -e "${GREEN}✓ Updated to latest version${NC}"
+    else
+      echo -e "${YELLOW}Cloning deployment repository...${NC}"
+      git clone https://github.com/Ayushjain101/Mailrice.git "$DEPLOY_DIR" > /dev/null 2>&1
+      cd "$DEPLOY_DIR"
+      echo -e "${GREEN}✓ Repository cloned${NC}"
+    fi
+  fi
 else
-  echo -e "${YELLOW}Cloning deployment repository...${NC}"
-  git clone https://github.com/Ayushjain101/Mailrice.git "$DEPLOY_DIR" > /dev/null 2>&1
-  cd "$DEPLOY_DIR"
-  echo -e "${GREEN}✓ Repository cloned${NC}"
+  # Not in a git repo, use default location
+  DEPLOY_DIR="$HOME/mailserver-deployment"
+  if [ -d "$DEPLOY_DIR" ]; then
+    echo -e "${YELLOW}Deployment directory exists. Updating...${NC}"
+    cd "$DEPLOY_DIR"
+    git pull origin main > /dev/null 2>&1
+    echo -e "${GREEN}✓ Updated to latest version${NC}"
+  else
+    echo -e "${YELLOW}Cloning deployment repository...${NC}"
+    git clone https://github.com/Ayushjain101/Mailrice.git "$DEPLOY_DIR" > /dev/null 2>&1
+    cd "$DEPLOY_DIR"
+    echo -e "${GREEN}✓ Repository cloned${NC}"
+  fi
 fi
 
 # Create inventory file
 echo -e "\n${BLUE}Creating Ansible inventory...${NC}"
-cat > inventory << EOF
+
+if [ "$USE_SSH_KEY" = true ]; then
+  # Use SSH key authentication
+  cat > inventory << EOF
+[mailserver]
+$SERVER_IP ansible_user=$SSH_USER ansible_ssh_private_key_file=$SSH_KEY_PATH ansible_become=yes
+EOF
+  log "INFO" "Inventory created with SSH key authentication"
+else
+  # Use password authentication
+  cat > inventory << EOF
 [mailserver]
 $SERVER_IP ansible_user=$SSH_USER ansible_ssh_pass=$SSH_PASS ansible_become=yes ansible_become_pass=$SSH_PASS
 EOF
+  log "WARNING" "Inventory created with password authentication (credentials in plaintext)"
+fi
 echo -e "${GREEN}✓ Inventory created${NC}"
 
 # Test SSH connection
@@ -288,7 +362,13 @@ else
   echo -e "${YELLOW}Troubleshooting:${NC}"
   echo "  1. Verify server IP: $SERVER_IP"
   echo "  2. Verify SSH user: $SSH_USER"
-  echo "  3. Verify SSH password is correct"
+  if [ "$USE_SSH_KEY" = true ]; then
+    echo "  3. Verify SSH key path: $SSH_KEY_PATH"
+    echo "  4. Ensure SSH key has correct permissions (chmod 600)"
+    echo "  5. Ensure server has the public key in ~/.ssh/authorized_keys"
+  else
+    echo "  3. Verify SSH password is correct"
+  fi
   echo "  4. Ensure SSH is enabled on the server"
   exit 1
 fi
