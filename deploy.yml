@@ -251,6 +251,144 @@
           ========================================
 
   tasks:
+    # ========== CONFIGURATION BACKUP (Phase 1 - Rollback Mechanism) ==========
+
+    - name: "[BACKUP] Check if this is a re-deployment"
+      stat:
+        path: /etc/postfix/main.cf
+      register: existing_postfix
+
+    - name: "[BACKUP] Check if Dovecot exists"
+      stat:
+        path: /etc/dovecot/dovecot.conf
+      register: existing_dovecot
+
+    - name: "[BACKUP] Check if MySQL exists"
+      stat:
+        path: /etc/mysql/my.cnf
+      register: existing_mysql
+
+    - name: "[BACKUP] Set backup required flag"
+      set_fact:
+        backup_required: "{{ existing_postfix.stat.exists or existing_dovecot.stat.exists or existing_mysql.stat.exists }}"
+
+    - name: "[BACKUP] Display backup status"
+      debug:
+        msg: |
+          ========================================
+          BACKUP STATUS
+          ========================================
+          Backup Required: {{ backup_required }}
+
+          {% if backup_required %}
+          Existing configurations detected:
+          - Postfix: {{ 'YES' if existing_postfix.stat.exists else 'NO' }}
+          - Dovecot: {{ 'YES' if existing_dovecot.stat.exists else 'NO' }}
+          - MySQL: {{ 'YES' if existing_mysql.stat.exists else 'NO' }}
+
+          A backup will be created before proceeding.
+          {% else %}
+          This appears to be a fresh installation.
+          No backup needed.
+          {% endif %}
+          ========================================
+
+    - name: "[BACKUP] Create backup directory"
+      file:
+        path: /root/.mailrice_backups
+        state: directory
+        mode: '0700'
+      when: backup_required
+
+    - name: "[BACKUP] Create configuration backup"
+      block:
+        - name: "[BACKUP] Create timestamped backup"
+          archive:
+            path:
+              - /etc/postfix
+              - /etc/dovecot
+              - /etc/mysql
+              - /etc/opendkim
+              - /etc/nginx/sites-available
+              - /var/vmail
+            dest: /root/.mailrice_backups/backup_{{ ansible_date_time.epoch }}.tar.gz
+            format: gz
+          register: backup_archive
+
+        - name: "[BACKUP] Store backup metadata"
+          copy:
+            dest: /root/.mailrice_backups/backup_{{ ansible_date_time.epoch }}.meta
+            content: |
+              Mailrice Backup Metadata
+              ========================================
+              Backup Created: {{ ansible_date_time.iso8601 }}
+              Hostname: {{ ansible_hostname }}
+              Domain: {{ domain }}
+              Backup File: {{ backup_archive.dest }}
+
+              Contents:
+              - Postfix configuration
+              - Dovecot configuration
+              - MySQL configuration
+              - OpenDKIM configuration
+              - Nginx configuration
+              - Mail data (/var/vmail)
+
+              To restore this backup:
+              sudo tar xzf {{ backup_archive.dest }} -C /
+
+              WARNING: This will overwrite current configurations!
+            mode: '0600'
+
+        - name: "[BACKUP] Store backup path"
+          set_fact:
+            backup_file: "{{ backup_archive.dest }}"
+
+        - name: "[BACKUP] Display backup confirmation"
+          debug:
+            msg: |
+              ========================================
+              BACKUP CREATED SUCCESSFULLY
+              ========================================
+              ✓ Backup created successfully
+              Location: {{ backup_archive.dest }}
+
+              This backup can be used to restore if deployment fails.
+              ========================================
+
+      rescue:
+        - name: "[BACKUP] Handle backup failure"
+          debug:
+            msg: |
+              ========================================
+              BACKUP WARNING
+              ========================================
+              WARNING: Backup creation failed
+
+              This is not critical for fresh installations.
+              For re-deployments, consider manual backup:
+
+              tar czf /root/manual_backup.tar.gz /etc/postfix /etc/dovecot /etc/mysql
+              ========================================
+
+        - name: "[BACKUP] Continue despite backup failure"
+          set_fact:
+            backup_file: ""
+
+      when: backup_required
+
+    - name: "[BACKUP] Keep last 5 backups only"
+      shell: |
+        cd /root/.mailrice_backups
+        ls -t backup_*.tar.gz 2>/dev/null | tail -n +6 | xargs rm -f
+        ls -t backup_*.meta 2>/dev/null | tail -n +6 | xargs rm -f
+      args:
+        executable: /bin/bash
+      when: backup_required
+      ignore_errors: yes
+
+    # ========== END CONFIGURATION BACKUP ==========
+
     - name: Check if database password file exists
       stat:
         path: /root/.db_password
@@ -1078,6 +1216,70 @@
       retries: 60
       delay: 2
 
+    # ========== CENTRALIZED LOGGING - Service Logs (Phase 1) ==========
+
+    - name: "[LOGGING] Create Mailrice log directory"
+      file:
+        path: /var/log/mailrice
+        state: directory
+        mode: '0755'
+
+    - name: "[LOGGING] Configure rsyslog for mail services"
+      copy:
+        dest: /etc/rsyslog.d/10-mailrice.conf
+        content: |
+          # Mailrice Centralized Logging Configuration (Phase 1 - V2 Stabalisation)
+          # Routes mail service logs to dedicated files
+
+          # Postfix logs
+          :programname, isequal, "postfix" -/var/log/mailrice/postfix.log
+          & stop
+
+          # Dovecot logs
+          :programname, isequal, "dovecot" -/var/log/mailrice/dovecot.log
+          & stop
+
+          # OpenDKIM logs
+          :programname, isequal, "opendkim" -/var/log/mailrice/opendkim.log
+          & stop
+        mode: '0644'
+      notify: restart rsyslog
+
+    - name: "[LOGGING] Configure log rotation for Mailrice logs"
+      copy:
+        dest: /etc/logrotate.d/mailrice
+        content: |
+          # Mailrice Log Rotation Configuration
+          # Keeps 14 days of logs, compressed
+
+          /var/log/mailrice/*.log {
+              daily
+              rotate 14
+              compress
+              delaycompress
+              notifempty
+              missingok
+              sharedscripts
+              postrotate
+                  systemctl reload rsyslog > /dev/null 2>&1 || true
+              endscript
+          }
+        mode: '0644'
+
+    - name: "[LOGGING] Create initial empty log files with correct permissions"
+      file:
+        path: "/var/log/mailrice/{{ item }}"
+        state: touch
+        mode: '0644'
+      loop:
+        - postfix.log
+        - dovecot.log
+        - opendkim.log
+        - deployment.log
+      changed_when: false
+
+    # ========== END CENTRALIZED LOGGING ==========
+
     - name: Create initial admin domain via API
       uri:
         url: "http://localhost:{{ api_port }}/domains"
@@ -1227,6 +1429,71 @@
       systemd:
         name: nginx
         state: restarted
+
+    - name: restart rsyslog
+      systemd:
+        name: rsyslog
+        state: restarted
+
+    - name: rollback deployment
+      block:
+        - name: "[ROLLBACK] Stop all services"
+          systemd:
+            name: "{{ item }}"
+            state: stopped
+          loop:
+            - postfix
+            - dovecot
+            - opendkim
+            - nginx
+            - mailserver-api
+          ignore_errors: yes
+
+        - name: "[ROLLBACK] Restore from backup"
+          unarchive:
+            src: "{{ backup_file }}"
+            dest: /
+            remote_src: yes
+          when: backup_file is defined and backup_file | length > 0
+
+        - name: "[ROLLBACK] Restart services"
+          systemd:
+            name: "{{ item }}"
+            state: started
+          loop:
+            - mysql
+            - postfix
+            - dovecot
+            - opendkim
+            - nginx
+            - mailserver-api
+          ignore_errors: yes
+
+        - name: "[ROLLBACK] Log rollback action"
+          shell: |
+            logger -t mailrice-deploy "ROLLBACK executed - restored from {{ backup_file | default('unknown') }}"
+            echo "[$(date)] ROLLBACK - Deployment failed, restored from backup" >> /var/log/mailrice/deployment.log
+
+        - name: "[ROLLBACK] Display rollback message"
+          debug:
+            msg: |
+              ========================================
+              DEPLOYMENT ROLLED BACK
+              ========================================
+
+              A deployment error occurred and the system
+              has been restored to its previous state.
+
+              Backup restored from: {{ backup_file | default('N/A') }}
+
+              Next steps:
+              1. Review deployment logs: /var/log/mailrice/
+              2. Fix the underlying issue
+              3. Re-run deployment
+
+              ========================================
+
+      when: backup_file is defined
 
     - name: reload nginx
       systemd:
