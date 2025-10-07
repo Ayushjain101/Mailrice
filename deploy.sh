@@ -1,9 +1,73 @@
 #!/bin/bash
 set -e
 
-# Mail Server One-Line Deployment Script
-# Auto-detects OS, installs dependencies, and deploys mail server
-# Usage: ./deploy.sh <server_ip> <ssh_user> <ssh_password> <domain> <hostname> [db_password]
+################################################################################
+# Mailrice Mail Server - One-Click Deployment Script
+################################################################################
+#
+# PURPOSE:
+#   Automates the complete deployment of a production-ready mail server with:
+#   - Postfix (SMTP/MTA) for sending/receiving emails
+#   - Dovecot (IMAP/POP3) for mailbox access
+#   - OpenDKIM for email authentication (SPF/DKIM/DMARC)
+#   - MySQL for virtual mailbox management
+#   - Node.js REST API for mail server administration
+#   - Nginx as web server and reverse proxy
+#   - SSL/TLS certificates via Let's Encrypt
+#
+# WHAT THIS SCRIPT DOES:
+#   1. Detects local OS (macOS/Linux/WSL) and installs prerequisites
+#   2. Installs Git, Ansible, and sshpass if not present
+#   3. Sets up centralized logging infrastructure (V2 feature)
+#   4. Tests SSH connectivity to target server
+#   5. Executes Ansible playbook (deploy.yml) to configure mail server
+#   6. Optionally configures Cloudflare DNS records automatically
+#   7. Generates deployment summary with credentials and next steps
+#
+# V2 STABALISATION IMPROVEMENTS (Phase 1):
+#   ✓ Centralized Logging - Timestamped logs for troubleshooting
+#   ✓ Pre-flight Validation - Checks system requirements before deployment
+#   ✓ Retry Logic - Handles transient network/package failures
+#   ✓ Rollback Mechanism - Automatic backup and restore on failure
+#
+# USAGE:
+#   ./deploy.sh <server_ip> <ssh_user> <ssh_password> <domain> <hostname> [db_password] [cf_email] [cf_api_key] [cf_zone_id] [email_recipient]
+#
+# EXAMPLES:
+#   Basic deployment:
+#     ./deploy.sh 1.2.3.4 ubuntu mypass example.com mail.example.com
+#
+#   With Cloudflare DNS automation:
+#     ./deploy.sh 1.2.3.4 ubuntu pass example.com mail.example.com dbpass you@email.com cf_key zone_id
+#
+#   With email notification:
+#     ./deploy.sh 1.2.3.4 ubuntu pass example.com mail.example.com '' you@email.com cf_key zone_id recipient@email.com
+#
+# PARAMETERS:
+#   server_ip       - IP address of target server (Ubuntu 20.04/22.04 recommended)
+#   ssh_user        - SSH username (usually 'ubuntu' or 'root')
+#   ssh_password    - SSH password for authentication
+#   domain          - Your domain name (e.g., example.com)
+#   hostname        - Mail server FQDN (e.g., mail.example.com)
+#   db_password     - [Optional] MySQL password (auto-generated if empty)
+#   cf_email        - [Optional] Cloudflare email for DNS automation
+#   cf_api_key      - [Optional] Cloudflare Global API Key
+#   cf_zone_id      - [Optional] Cloudflare Zone ID
+#   email_recipient - [Optional] Email address for deployment docs
+#
+# REQUIREMENTS:
+#   Local Machine: Git, Ansible, sshpass (auto-installed by this script)
+#   Remote Server: Ubuntu 20.04/22.04, minimum 2GB RAM, 10GB disk
+#
+# LOGS:
+#   Deployment logs: /var/log/mailrice/deployment_YYYYMMDD_HHMMSS.log
+#   Summary: /var/log/mailrice/deployment_summary.txt
+#
+# AUTHOR: Mailrice Project
+# VERSION: V2 Stabalisation (Phase 1)
+# DOCUMENTATION: See CODEBASE_DOCUMENTATION.md for architecture details
+#
+################################################################################
 
 # Color codes
 RED='\033[0;31m'
