@@ -1241,32 +1241,6 @@
         state: link
       notify: restart nginx
 
-    - name: Configure Nginx for Dashboard subdomain
-      template:
-        src: templates/nginx-dashboard.conf.j2
-        dest: /etc/nginx/sites-available/mailserver-dashboard
-      notify: restart nginx
-
-    - name: Enable Dashboard Nginx site
-      file:
-        src: /etc/nginx/sites-available/mailserver-dashboard
-        dest: /etc/nginx/sites-enabled/mailserver-dashboard
-        state: link
-      notify: restart nginx
-
-    - name: Configure Nginx reverse proxy for API
-      template:
-        src: templates/nginx-api.conf.j2
-        dest: /etc/nginx/sites-available/mailserver-api
-      notify: restart nginx
-
-    - name: Enable Nginx site
-      file:
-        src: /etc/nginx/sites-available/mailserver-api
-        dest: /etc/nginx/sites-enabled/mailserver-api
-        state: link
-      notify: restart nginx
-
     - name: Remove default Nginx site
       file:
         path: /etc/nginx/sites-enabled/default
@@ -1314,6 +1288,36 @@
       retries: 3
       delay: 30
       ignore_errors: yes
+
+    - name: Configure Nginx for Dashboard subdomain
+      template:
+        src: templates/nginx-dashboard.conf.j2
+        dest: /etc/nginx/sites-available/mailserver-dashboard
+      notify: restart nginx
+      when: certbot_dashboard_result is succeeded
+
+    - name: Enable Dashboard Nginx site
+      file:
+        src: /etc/nginx/sites-available/mailserver-dashboard
+        dest: /etc/nginx/sites-enabled/mailserver-dashboard
+        state: link
+      notify: restart nginx
+      when: certbot_dashboard_result is succeeded
+
+    - name: Configure Nginx reverse proxy for API
+      template:
+        src: templates/nginx-api.conf.j2
+        dest: /etc/nginx/sites-available/mailserver-api
+      notify: restart nginx
+      when: certbot_result is succeeded
+
+    - name: Enable Nginx site
+      file:
+        src: /etc/nginx/sites-available/mailserver-api
+        dest: /etc/nginx/sites-enabled/mailserver-api
+        state: link
+      notify: restart nginx
+      when: certbot_result is succeeded
 
     - name: Reload Nginx after SSL certificate acquisition
       systemd:
