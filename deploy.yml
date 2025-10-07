@@ -10,7 +10,7 @@
     domain: "{{ domain }}"
     hostname: "{{ hostname }}"
     db_name: mailserver
-    db_user: mailuser
+    db_user: mailserver
     api_port: 3000
     vmail_uid: 5000
     vmail_gid: 5000
@@ -111,16 +111,52 @@
         owner: vmail
         group: vmail
 
+    # ========== MySQL Configuration (iRedMail-inspired improvements) ==========
+
+    - name: Ensure MySQL service is enabled and started
+      systemd:
+        name: mysql
+        state: started
+        enabled: yes
+
+    - name: Wait for MySQL to be ready
+      wait_for:
+        port: 3306
+        delay: 5
+        timeout: 60
+        host: 127.0.0.1
+
+    - name: Create /root/.my.cnf for root authentication
+      copy:
+        content: |
+          [client]
+          user=root
+          password=""
+          socket=/var/run/mysqld/mysqld.sock
+        dest: /root/.my.cnf
+        mode: '0600'
+
+    - name: Secure MySQL installation - Remove anonymous users and test database
+      shell: |
+        mysql -e "DELETE FROM mysql.user WHERE User='';" || true
+        mysql -e "DELETE FROM mysql.user WHERE User='root' AND Host NOT IN ('localhost', '127.0.0.1', '::1');" || true
+        mysql -e "DROP DATABASE IF EXISTS test;" || true
+        mysql -e "DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';" || true
+        mysql -e "FLUSH PRIVILEGES;"
+      args:
+        executable: /bin/bash
+      ignore_errors: yes
+
     - name: Create MySQL database
       mysql_db:
         name: "{{ db_name }}"
         state: present
         login_unix_socket: /var/run/mysqld/mysqld.sock
 
-    - name: Create MySQL user and set password
+    - name: Create MySQL user with proper syntax
       shell: >
-        mysql -e "CREATE USER IF NOT EXISTS '{{ db_user }}'@'localhost';" &&
-        mysql -e "ALTER USER '{{ db_user }}'@'localhost' IDENTIFIED BY '{{ db_password }}';" &&
+        mysql -e "DROP USER IF EXISTS '{{ db_user }}'@'localhost';" &&
+        mysql -e "CREATE USER '{{ db_user }}'@'localhost' IDENTIFIED BY '{{ db_password }}';" &&
         mysql -e "GRANT ALL PRIVILEGES ON {{ db_name }}.* TO '{{ db_user }}'@'localhost';" &&
         mysql -e "FLUSH PRIVILEGES;"
       args:
