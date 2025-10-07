@@ -1227,49 +1227,6 @@
         seconds: 30
       when: (dns_hostname_result is changed or dns_dashboard_result is changed) and (dns_hostname_result is not failed and dns_dashboard_result is not failed)
 
-    - name: Create temporary HTTP-only nginx config for certbot
-      copy:
-        dest: /etc/nginx/sites-available/certbot-temp
-        content: |
-          server {
-              listen 80 default_server;
-              listen [::]:80 default_server;
-              server_name {{ hostname }} wow.{{ domain }};
-              root /var/www/html;
-
-              location / {
-                  return 200 'OK';
-                  add_header Content-Type text/plain;
-              }
-
-              location /.well-known/acme-challenge/ {
-                  root /var/www/html;
-              }
-          }
-        mode: '0644'
-      notify: restart nginx
-
-    - name: Enable temporary nginx config
-      file:
-        src: /etc/nginx/sites-available/certbot-temp
-        dest: /etc/nginx/sites-enabled/certbot-temp
-        state: link
-      notify: restart nginx
-
-    - name: Remove default Nginx site
-      file:
-        path: /etc/nginx/sites-enabled/default
-        state: absent
-      notify: restart nginx
-
-    - name: Force Nginx restart before SSL certificate acquisition
-      meta: flush_handlers
-
-    - name: Wait for Nginx to be ready
-      wait_for:
-        port: 80
-        timeout: 30
-
     # Deploy HTTP-only configurations first (always succeeds, non-blocking)
     - name: "[HTTP] Configure Nginx HTTP-only for API"
       template:
