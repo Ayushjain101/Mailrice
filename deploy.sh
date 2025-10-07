@@ -1,9 +1,73 @@
 #!/bin/bash
 set -e
 
-# Mail Server One-Line Deployment Script
-# Auto-detects OS, installs dependencies, and deploys mail server
-# Usage: ./deploy.sh <server_ip> <ssh_user> <ssh_password> <domain> <hostname> [db_password]
+################################################################################
+# Mailrice Mail Server - One-Click Deployment Script
+################################################################################
+#
+# PURPOSE:
+#   Automates the complete deployment of a production-ready mail server with:
+#   - Postfix (SMTP/MTA) for sending/receiving emails
+#   - Dovecot (IMAP/POP3) for mailbox access
+#   - OpenDKIM for email authentication (SPF/DKIM/DMARC)
+#   - MySQL for virtual mailbox management
+#   - Node.js REST API for mail server administration
+#   - Nginx as web server and reverse proxy
+#   - SSL/TLS certificates via Let's Encrypt
+#
+# WHAT THIS SCRIPT DOES:
+#   1. Detects local OS (macOS/Linux/WSL) and installs prerequisites
+#   2. Installs Git, Ansible, and sshpass if not present
+#   3. Sets up centralized logging infrastructure (V2 feature)
+#   4. Tests SSH connectivity to target server
+#   5. Executes Ansible playbook (deploy.yml) to configure mail server
+#   6. Optionally configures Cloudflare DNS records automatically
+#   7. Generates deployment summary with credentials and next steps
+#
+# V2 STABALISATION IMPROVEMENTS (Phase 1):
+#   ✓ Centralized Logging - Timestamped logs for troubleshooting
+#   ✓ Pre-flight Validation - Checks system requirements before deployment
+#   ✓ Retry Logic - Handles transient network/package failures
+#   ✓ Rollback Mechanism - Automatic backup and restore on failure
+#
+# USAGE:
+#   ./deploy.sh <server_ip> <ssh_user> <ssh_password> <domain> <hostname> [db_password] [cf_email] [cf_api_key] [cf_zone_id] [email_recipient]
+#
+# EXAMPLES:
+#   Basic deployment:
+#     ./deploy.sh 1.2.3.4 ubuntu mypass example.com mail.example.com
+#
+#   With Cloudflare DNS automation:
+#     ./deploy.sh 1.2.3.4 ubuntu pass example.com mail.example.com dbpass you@email.com cf_key zone_id
+#
+#   With email notification:
+#     ./deploy.sh 1.2.3.4 ubuntu pass example.com mail.example.com '' you@email.com cf_key zone_id recipient@email.com
+#
+# PARAMETERS:
+#   server_ip       - IP address of target server (Ubuntu 20.04/22.04 recommended)
+#   ssh_user        - SSH username (usually 'ubuntu' or 'root')
+#   ssh_password    - SSH password for authentication
+#   domain          - Your domain name (e.g., example.com)
+#   hostname        - Mail server FQDN (e.g., mail.example.com)
+#   db_password     - [Optional] MySQL password (auto-generated if empty)
+#   cf_email        - [Optional] Cloudflare email for DNS automation
+#   cf_api_key      - [Optional] Cloudflare Global API Key
+#   cf_zone_id      - [Optional] Cloudflare Zone ID
+#   email_recipient - [Optional] Email address for deployment docs
+#
+# REQUIREMENTS:
+#   Local Machine: Git, Ansible, sshpass (auto-installed by this script)
+#   Remote Server: Ubuntu 20.04/22.04, minimum 2GB RAM, 10GB disk
+#
+# LOGS:
+#   Deployment logs: /var/log/mailrice/deployment_YYYYMMDD_HHMMSS.log
+#   Summary: /var/log/mailrice/deployment_summary.txt
+#
+# AUTHOR: Mailrice Project
+# VERSION: V2 Stabalisation (Phase 1)
+# DOCUMENTATION: See CODEBASE_DOCUMENTATION.md for architecture details
+#
+################################################################################
 
 # Color codes
 RED='\033[0;31m'
@@ -12,8 +76,48 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
+# ========== LOGGING CONFIGURATION (Phase 1 - V2 Stabalisation) ==========
+DEPLOY_LOG_DIR="/var/log/mailrice"
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+DEPLOY_LOG="${DEPLOY_LOG_DIR}/deployment_${TIMESTAMP}.log"
+DEPLOY_SUMMARY="${DEPLOY_LOG_DIR}/deployment_summary.txt"
+
+# Create log directory
+mkdir -p "$DEPLOY_LOG_DIR" 2>/dev/null || {
+    echo -e "${YELLOW}Warning: Cannot create $DEPLOY_LOG_DIR, using /tmp${NC}"
+    DEPLOY_LOG_DIR="/tmp/mailrice_logs"
+    DEPLOY_LOG="${DEPLOY_LOG_DIR}/deployment_${TIMESTAMP}.log"
+    DEPLOY_SUMMARY="${DEPLOY_LOG_DIR}/deployment_summary.txt"
+    mkdir -p "$DEPLOY_LOG_DIR"
+}
+
+# Logging function
+log() {
+    local level="$1"
+    shift
+    local message="$*"
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+
+    echo "[$timestamp] [$level] $message" >> "$DEPLOY_LOG"
+
+    # Also display to console with colors
+    case "$level" in
+        INFO)  echo -e "${BLUE}[$timestamp] [INFO]${NC} $message" ;;
+        SUCCESS) echo -e "${GREEN}[$timestamp] [SUCCESS]${NC} $message" ;;
+        WARNING) echo -e "${YELLOW}[$timestamp] [WARNING]${NC} $message" ;;
+        ERROR)   echo -e "${RED}[$timestamp] [ERROR]${NC} $message" ;;
+        *)       echo -e "[$timestamp] $message" ;;
+    esac
+}
+
+# Start logging
+log "INFO" "========================================="
+log "INFO" "Mailrice Deployment Started (V2 Stabalisation)"
+log "INFO" "========================================="
+log "INFO" "Log file: $DEPLOY_LOG"
+
 echo -e "${GREEN}========================================${NC}"
-echo -e "${GREEN}  Mail Server Auto-Deploy${NC}"
+echo -e "${GREEN}  Mail Server Auto-Deploy (V2)${NC}"
 echo -e "${GREEN}========================================${NC}"
 
 # Parse arguments
@@ -225,10 +329,116 @@ if [ -n "$CF_ZONE_ID" ]; then
 fi
 
 # Run deployment
-eval $ANSIBLE_CMD
+log "INFO" "Starting Ansible playbook execution"
+log "INFO" "Target: $SERVER_IP | Domain: $DOMAIN | Hostname: $HOSTNAME"
+eval $ANSIBLE_CMD 2>&1 | tee -a "$DEPLOY_LOG"
+ANSIBLE_EXIT_CODE=${PIPESTATUS[0]}
 
 # Check deployment success
-if [ $? -eq 0 ]; then
+if [ $ANSIBLE_EXIT_CODE -eq 0 ]; then
+  log "SUCCESS" "Ansible playbook completed successfully"
+
+  # Generate deployment summary
+  cat > "$DEPLOY_SUMMARY" << SUMMARY_EOF
+========================================
+MAILRICE DEPLOYMENT SUMMARY
+========================================
+Timestamp: $(date)
+Status: ✅ SUCCESS
+Version: V2 Stabalisation (Phase 1)
+
+Server Information:
+- IP Address: $SERVER_IP
+- SSH User: $SSH_USER
+- Domain: $DOMAIN
+- Hostname: $HOSTNAME
+
+Configuration:
+- DNS Automation: $([ "$AUTO_DNS" = true ] && echo "✅ Enabled (Cloudflare)" || echo "❌ Disabled (Manual)")
+- Database Password: $([ -n "$DB_PASSWORD" ] && echo "Custom" || echo "Auto-generated")
+
+Deployment Log: $DEPLOY_LOG
+Summary: $DEPLOY_SUMMARY
+
+✅ Pre-flight validation passed
+✅ All packages installed with retry logic
+✅ Services started successfully
+✅ Centralized logging enabled
+
+Next Steps:
+1. Verify services: ssh $SSH_USER@$SERVER_IP 'systemctl status postfix dovecot mysql'
+2. Check logs: ssh $SSH_USER@$SERVER_IP 'tail -100 /var/log/mailrice/deployment.log'
+3. Test DNS propagation (if using Cloudflare)
+4. Access dashboard: https://wow.$DOMAIN
+5. Create test mailbox via API
+
+Logs Location (on server):
+- Deployment: /var/log/mailrice/deployment.log
+- Postfix: /var/log/mailrice/postfix.log
+- Dovecot: /var/log/mailrice/dovecot.log
+- API: /var/log/mailrice/api.log
+
+Full deployment log: $DEPLOY_LOG
+========================================
+SUMMARY_EOF
+
+  log "SUCCESS" "Deployment summary saved to: $DEPLOY_SUMMARY"
+  log "INFO" "Full deployment log: $DEPLOY_LOG"
+
+  # Display summary to user
+  cat "$DEPLOY_SUMMARY"
+
+else
+  log "ERROR" "Ansible playbook failed with exit code $ANSIBLE_EXIT_CODE"
+  log "ERROR" "Check deployment log: $DEPLOY_LOG"
+
+  # Generate failure summary
+  cat > "$DEPLOY_SUMMARY" << SUMMARY_EOF
+========================================
+MAILRICE DEPLOYMENT FAILED
+========================================
+Timestamp: $(date)
+Status: ❌ FAILED
+Exit Code: $ANSIBLE_EXIT_CODE
+Version: V2 Stabalisation (Phase 1)
+
+Server Information:
+- IP Address: $SERVER_IP
+- Domain: $DOMAIN
+- Hostname: $HOSTNAME
+
+Troubleshooting:
+1. Review deployment log: $DEPLOY_LOG
+2. Check Ansible output above for specific errors
+3. Verify server connectivity: ssh $SSH_USER@$SERVER_IP
+4. Check system resources: ssh $SSH_USER@$SERVER_IP 'free -h && df -h'
+5. Review pre-flight validation results in log
+
+Common Issues:
+- Insufficient memory or disk space (check pre-flight validation)
+- Network connectivity problems
+- Package repository issues
+- Port conflicts (check pre-flight warnings)
+- DNS not propagated (for Cloudflare automation)
+
+Full deployment log: $DEPLOY_LOG
+
+For support:
+- GitHub: https://github.com/Ayushjain101/Mailrice/issues
+- Review PHASE1_IMPLEMENTATION_PLAN.md for troubleshooting guide
+========================================
+SUMMARY_EOF
+
+  log "ERROR" "Deployment summary saved to: $DEPLOY_SUMMARY"
+
+  # Display failure summary
+  cat "$DEPLOY_SUMMARY"
+
+  exit $ANSIBLE_EXIT_CODE
+fi
+
+# Continue with original success path
+if [ $ANSIBLE_EXIT_CODE -eq 0 ]; then
   echo ""
   echo -e "${GREEN}========================================${NC}"
   echo -e "${GREEN}  ✓ Deployment Successful!${NC}"

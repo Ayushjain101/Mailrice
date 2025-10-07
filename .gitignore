@@ -1,0 +1,35 @@
+# Mailrice .gitignore
+# Ignore backup files created during development
+*.backup
+*.old
+*.tmp
+
+# Ignore log files
+*.log
+deployment_*.log
+
+# Ignore local test files
+*test*.log
+*local*.sh
+
+# Ignore IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Ignore OS files
+.DS_Store
+Thumbs.db
+
+# Ignore deployment temporary files
+/tmp/
+ansible.cfg
+inventory.ini
+
+# Ignore sensitive credential files (these should NEVER be committed)
+*.key
+*.pem
+*_credentials
+.env.local

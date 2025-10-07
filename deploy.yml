@@ -19,7 +19,376 @@
     cf_api_key: "{{ cf_api_key | default('') }}"
     cf_zone_id: "{{ cf_zone_id | default('') }}"
 
+  pre_tasks:
+    # ========== PRE-FLIGHT VALIDATION (Phase 1 - V2 Stabalisation) ==========
+    - name: "[PRE-FLIGHT] Display validation start"
+      debug:
+        msg: |
+          ========================================
+          PRE-FLIGHT VALIDATION
+          ========================================
+          Checking system requirements...
+
+    - name: "[PRE-FLIGHT] Check system memory (minimum 2GB required, 4GB recommended)"
+      assert:
+        that:
+          - ansible_memtotal_mb >= 2048
+        fail_msg: |
+          INSUFFICIENT MEMORY
+
+          Minimum Required: 2GB (2048 MB)
+          Current Available: {{ ansible_memtotal_mb }} MB
+          Recommended: 4GB (4096 MB)
+
+          Mail server requires at least 2GB RAM for stable operation.
+          Please upgrade your server resources before deployment.
+        success_msg: "✓ Memory check passed: {{ ansible_memtotal_mb }} MB available"
+
+    - name: "[PRE-FLIGHT] Check disk space (minimum 10GB required)"
+      assert:
+        that:
+          - item.size_available > 10737418240  # 10GB in bytes
+        fail_msg: |
+          INSUFFICIENT DISK SPACE
+
+          Minimum Required: 10GB
+          Current Available: {{ (item.size_available / 1024 / 1024 / 1024) | round(2) }} GB on {{ item.mount }}
+
+          Mail server requires at least 10GB for:
+          - System packages and dependencies
+          - Mail storage (/var/vmail)
+          - Database files
+          - Log files
+
+          Please free up disk space or use a larger volume.
+        success_msg: "✓ Disk space check passed: {{ (item.size_available / 1024 / 1024 / 1024) | round(2) }} GB available on {{ item.mount }}"
+      loop: "{{ ansible_mounts }}"
+      when: item.mount == '/'
+
+    - name: "[PRE-FLIGHT] Validate hostname format"
+      assert:
+        that:
+          - hostname is match('^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$')
+          - hostname is match('.*\..*')  # Must contain at least one dot (FQDN)
+        fail_msg: |
+          INVALID HOSTNAME FORMAT
+
+          Provided: {{ hostname }}
+
+          Requirements:
+          - Must be a valid FQDN (e.g., mail.example.com)
+          - Only lowercase letters, numbers, dots, and hyphens allowed
+          - Must contain at least one dot
+          - Cannot start or end with a hyphen
+          - Maximum 253 characters
+
+          Examples:
+          ✓ mail.example.com
+          ✓ smtp.my-domain.org
+          ✗ localhost
+          ✗ MAIL.EXAMPLE.COM (uppercase not allowed)
+          ✗ -invalid-.com
+        success_msg: "✓ Hostname format valid: {{ hostname }}"
+
+    - name: "[PRE-FLIGHT] Validate domain format"
+      assert:
+        that:
+          - domain is match('^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$')
+          - domain is match('.*\..*')  # Must contain at least one dot
+        fail_msg: |
+          INVALID DOMAIN FORMAT
+
+          Provided: {{ domain }}
+
+          Requirements:
+          - Must be a valid domain (e.g., example.com)
+          - Only lowercase letters, numbers, dots, and hyphens allowed
+          - Must contain at least one dot
+          - Cannot start or end with a hyphen
+
+          Examples:
+          ✓ example.com
+          ✓ my-domain.org
+          ✗ example (no TLD)
+          ✗ EXAMPLE.COM (uppercase not allowed)
+        success_msg: "✓ Domain format valid: {{ domain }}"
+
+    - name: "[PRE-FLIGHT] Check if vmail UID is available"
+      shell: "id {{ vmail_uid }} 2>&1 | grep -q 'no such user' && echo 'available' || echo 'taken'"
+      register: vmail_uid_check
+      changed_when: false
+      failed_when: false
+
+    - name: "[PRE-FLIGHT] Display UID warning if taken"
+      debug:
+        msg: |
+          WARNING: UID {{ vmail_uid }} is already in use
+          This may cause permission conflicts with mail storage.
+          Deployment will continue but may require manual intervention.
+      when: vmail_uid_check.stdout == 'taken'
+
+    - name: "[PRE-FLIGHT] Check for existing mail server components"
+      shell: "dpkg -l 2>/dev/null | grep -E '^ii.*(postfix|dovecot)' | awk '{print $2}' || true"
+      register: existing_mail_packages
+      changed_when: false
+
+    - name: "[PRE-FLIGHT] Display existing mail server warning"
+      debug:
+        msg: |
+          ========================================
+          WARNING: EXISTING MAIL SERVER DETECTED
+          ========================================
+
+          Found installed packages:
+          {{ existing_mail_packages.stdout_lines | join('\n          ') }}
+
+          iRedMail and most mail server deployments recommend a FRESH server.
+
+          Potential Issues:
+          - Configuration conflicts
+          - Service binding conflicts
+          - Data corruption or loss
+
+          Recommendations:
+          1. Back up any existing mail data
+          2. Remove existing mail packages: apt remove postfix dovecot* --purge
+          3. Verify clean state: dpkg -l | grep -E '(postfix|dovecot)'
+
+          Deployment will continue in 10 seconds...
+          Press Ctrl+C to abort if you need to clean up first.
+          ========================================
+      when: existing_mail_packages.stdout_lines | length > 0
+
+    - name: "[PRE-FLIGHT] Pause if existing mail server detected"
+      pause:
+        seconds: 10
+      when: existing_mail_packages.stdout_lines | length > 0
+
+    - name: "[PRE-FLIGHT] Check required ports availability"
+      wait_for:
+        port: "{{ item.port }}"
+        state: stopped
+        timeout: 1
+      loop:
+        - { port: 25, name: 'SMTP' }
+        - { port: 80, name: 'HTTP' }
+        - { port: 110, name: 'POP3' }
+        - { port: 143, name: 'IMAP' }
+        - { port: 443, name: 'HTTPS' }
+        - { port: 465, name: 'SMTPS' }
+        - { port: 587, name: 'Submission' }
+        - { port: 993, name: 'IMAPS' }
+        - { port: 995, name: 'POP3S' }
+        - { port: "{{ api_port }}", name: 'API' }
+      ignore_errors: yes
+      register: port_check
+
+    - name: "[PRE-FLIGHT] Analyze port conflicts"
+      set_fact:
+        ports_in_use: "{{ port_check.results | selectattr('failed', 'equalto', true) | map(attribute='item') | list }}"
+
+    - name: "[PRE-FLIGHT] Display port conflict warning"
+      debug:
+        msg: |
+          ========================================
+          WARNING: PORT CONFLICTS DETECTED
+          ========================================
+
+          The following ports are already in use:
+          {% for port in ports_in_use %}
+          - Port {{ port.port }} ({{ port.name }})
+          {% endfor %}
+
+          Common causes:
+          - Existing web server (Apache, Nginx)
+          - Existing mail server (Postfix, Dovecot)
+          - Development servers
+
+          To fix:
+          1. Stop conflicting services:
+             systemctl stop apache2 nginx postfix dovecot
+
+          2. Identify process using port:
+             lsof -i :{{ ports_in_use[0].port }}
+             netstat -tulpn | grep :{{ ports_in_use[0].port }}
+
+          Deployment will attempt to continue...
+          ========================================
+      when: ports_in_use | length > 0
+
+    - name: "[PRE-FLIGHT] Stop conflicting services automatically"
+      systemd:
+        name: "{{ item }}"
+        state: stopped
+      loop:
+        - apache2
+        - nginx
+      ignore_errors: yes
+      when: ports_in_use | length > 0
+
+    - name: "[PRE-FLIGHT] Validation summary"
+      debug:
+        msg: |
+          ========================================
+          PRE-FLIGHT VALIDATION SUMMARY
+          ========================================
+
+          System Resources:
+          ✓ Memory: {{ ansible_memtotal_mb }} MB ({{ 'OK' if ansible_memtotal_mb >= 4096 else 'Adequate' if ansible_memtotal_mb >= 2048 else 'INSUFFICIENT' }})
+          ✓ Disk Space: {{ (ansible_mounts | selectattr('mount', 'equalto', '/') | map(attribute='size_available') | first / 1024 / 1024 / 1024) | round(2) }} GB
+          ✓ CPU Cores: {{ ansible_processor_vcpus }}
+
+          Configuration:
+          ✓ Domain: {{ domain }}
+          ✓ Hostname: {{ hostname }}
+          ✓ vmail UID: {{ vmail_uid }} ({{ 'available' if vmail_uid_check.stdout == 'available' else 'IN USE - may conflict' }})
+
+          Network:
+          ✓ Server IP: {{ ansible_default_ipv4.address }}
+          ✓ DNS Automation: {{ 'Enabled (Cloudflare)' if cf_email is defined and cf_email | length > 0 else 'Disabled (Manual DNS required)' }}
+
+          {{ 'All checks passed! Proceeding with deployment...' if existing_mail_packages.stdout_lines | length == 0 else 'Warnings present - review above before continuing' }}
+          ========================================
+
   tasks:
+    # ========== CONFIGURATION BACKUP (Phase 1 - Rollback Mechanism) ==========
+
+    - name: "[BACKUP] Check if this is a re-deployment"
+      stat:
+        path: /etc/postfix/main.cf
+      register: existing_postfix
+
+    - name: "[BACKUP] Check if Dovecot exists"
+      stat:
+        path: /etc/dovecot/dovecot.conf
+      register: existing_dovecot
+
+    - name: "[BACKUP] Check if MySQL exists"
+      stat:
+        path: /etc/mysql/my.cnf
+      register: existing_mysql
+
+    - name: "[BACKUP] Set backup required flag"
+      set_fact:
+        backup_required: "{{ existing_postfix.stat.exists or existing_dovecot.stat.exists or existing_mysql.stat.exists }}"
+
+    - name: "[BACKUP] Display backup status"
+      debug:
+        msg: |
+          ========================================
+          BACKUP STATUS
+          ========================================
+          Backup Required: {{ backup_required }}
+
+          {% if backup_required %}
+          Existing configurations detected:
+          - Postfix: {{ 'YES' if existing_postfix.stat.exists else 'NO' }}
+          - Dovecot: {{ 'YES' if existing_dovecot.stat.exists else 'NO' }}
+          - MySQL: {{ 'YES' if existing_mysql.stat.exists else 'NO' }}
+
+          A backup will be created before proceeding.
+          {% else %}
+          This appears to be a fresh installation.
+          No backup needed.
+          {% endif %}
+          ========================================
+
+    - name: "[BACKUP] Create backup directory"
+      file:
+        path: /root/.mailrice_backups
+        state: directory
+        mode: '0700'
+      when: backup_required
+
+    - name: "[BACKUP] Create configuration backup"
+      block:
+        - name: "[BACKUP] Create timestamped backup"
+          archive:
+            path:
+              - /etc/postfix
+              - /etc/dovecot
+              - /etc/mysql
+              - /etc/opendkim
+              - /etc/nginx/sites-available
+              - /var/vmail
+            dest: /root/.mailrice_backups/backup_{{ ansible_date_time.epoch }}.tar.gz
+            format: gz
+          register: backup_archive
+
+        - name: "[BACKUP] Store backup metadata"
+          copy:
+            dest: /root/.mailrice_backups/backup_{{ ansible_date_time.epoch }}.meta
+            content: |
+              Mailrice Backup Metadata
+              ========================================
+              Backup Created: {{ ansible_date_time.iso8601 }}
+              Hostname: {{ ansible_hostname }}
+              Domain: {{ domain }}
+              Backup File: {{ backup_archive.dest }}
+
+              Contents:
+              - Postfix configuration
+              - Dovecot configuration
+              - MySQL configuration
+              - OpenDKIM configuration
+              - Nginx configuration
+              - Mail data (/var/vmail)
+
+              To restore this backup:
+              sudo tar xzf {{ backup_archive.dest }} -C /
+
+              WARNING: This will overwrite current configurations!
+            mode: '0600'
+
+        - name: "[BACKUP] Store backup path"
+          set_fact:
+            backup_file: "{{ backup_archive.dest }}"
+
+        - name: "[BACKUP] Display backup confirmation"
+          debug:
+            msg: |
+              ========================================
+              BACKUP CREATED SUCCESSFULLY
+              ========================================
+              ✓ Backup created successfully
+              Location: {{ backup_archive.dest }}
+
+              This backup can be used to restore if deployment fails.
+              ========================================
+
+      rescue:
+        - name: "[BACKUP] Handle backup failure"
+          debug:
+            msg: |
+              ========================================
+              BACKUP WARNING
+              ========================================
+              WARNING: Backup creation failed
+
+              This is not critical for fresh installations.
+              For re-deployments, consider manual backup:
+
+              tar czf /root/manual_backup.tar.gz /etc/postfix /etc/dovecot /etc/mysql
+              ========================================
+
+        - name: "[BACKUP] Continue despite backup failure"
+          set_fact:
+            backup_file: ""
+
+      when: backup_required
+
+    - name: "[BACKUP] Keep last 5 backups only"
+      shell: |
+        cd /root/.mailrice_backups
+        ls -t backup_*.tar.gz 2>/dev/null | tail -n +6 | xargs rm -f
+        ls -t backup_*.meta 2>/dev/null | tail -n +6 | xargs rm -f
+      args:
+        executable: /bin/bash
+      when: backup_required
+      ignore_errors: yes
+
+    # ========== END CONFIGURATION BACKUP ==========
+
     - name: Check if database password file exists
       stat:
         path: /root/.db_password
@@ -61,7 +430,7 @@
         update_cache: yes
         cache_valid_time: 3600
 
-    - name: Install required packages
+    - name: "[INSTALL] Install required packages (with retry - Phase 1)"
       apt:
         name:
           - postfix
@@ -81,6 +450,10 @@
           - certbot
           - python3-certbot-nginx
         state: present
+      register: package_install
+      until: package_install is succeeded
+      retries: 3
+      delay: 10
 
     - name: Install Node.js 20.x
       shell: |
@@ -570,7 +943,7 @@
         port: 80
         timeout: 30
 
-    - name: Obtain Let's Encrypt SSL certificate for mail hostname
+    - name: "[SSL] Obtain Let's Encrypt SSL certificate for mail hostname (with retry - Phase 1)"
       shell: |
         certbot certonly --webroot \
           -w /var/www/html \
@@ -582,9 +955,12 @@
       args:
         creates: /etc/letsencrypt/live/{{ hostname }}/fullchain.pem
       register: certbot_result
+      until: certbot_result.rc == 0
+      retries: 3
+      delay: 30
       ignore_errors: yes
 
-    - name: Obtain Let's Encrypt SSL certificate for dashboard (wow subdomain)
+    - name: "[SSL] Obtain Let's Encrypt SSL certificate for dashboard (with retry - Phase 1)"
       shell: |
         certbot certonly --webroot \
           -w /var/www/html \
@@ -596,6 +972,9 @@
       args:
         creates: /etc/letsencrypt/live/wow.{{ domain }}/fullchain.pem
       register: certbot_dashboard_result
+      until: certbot_dashboard_result.rc == 0
+      retries: 3
+      delay: 30
       ignore_errors: yes
 
     - name: Reload Nginx after SSL certificate acquisition
@@ -827,15 +1206,79 @@
         - mailserver-api
         - nginx
 
-    - name: Wait for API to be ready
+    - name: "[API] Wait for API to be ready (extended retry - Phase 1)"
       uri:
         url: "http://localhost:{{ api_port }}/health"
         method: GET
         status_code: 200
       register: api_health
       until: api_health.status == 200
-      retries: 30
+      retries: 60
       delay: 2
+
+    # ========== CENTRALIZED LOGGING - Service Logs (Phase 1) ==========
+
+    - name: "[LOGGING] Create Mailrice log directory"
+      file:
+        path: /var/log/mailrice
+        state: directory
+        mode: '0755'
+
+    - name: "[LOGGING] Configure rsyslog for mail services"
+      copy:
+        dest: /etc/rsyslog.d/10-mailrice.conf
+        content: |
+          # Mailrice Centralized Logging Configuration (Phase 1 - V2 Stabalisation)
+          # Routes mail service logs to dedicated files
+
+          # Postfix logs
+          :programname, isequal, "postfix" -/var/log/mailrice/postfix.log
+          & stop
+
+          # Dovecot logs
+          :programname, isequal, "dovecot" -/var/log/mailrice/dovecot.log
+          & stop
+
+          # OpenDKIM logs
+          :programname, isequal, "opendkim" -/var/log/mailrice/opendkim.log
+          & stop
+        mode: '0644'
+      notify: restart rsyslog
+
+    - name: "[LOGGING] Configure log rotation for Mailrice logs"
+      copy:
+        dest: /etc/logrotate.d/mailrice
+        content: |
+          # Mailrice Log Rotation Configuration
+          # Keeps 14 days of logs, compressed
+
+          /var/log/mailrice/*.log {
+              daily
+              rotate 14
+              compress
+              delaycompress
+              notifempty
+              missingok
+              sharedscripts
+              postrotate
+                  systemctl reload rsyslog > /dev/null 2>&1 || true
+              endscript
+          }
+        mode: '0644'
+
+    - name: "[LOGGING] Create initial empty log files with correct permissions"
+      file:
+        path: "/var/log/mailrice/{{ item }}"
+        state: touch
+        mode: '0644'
+      loop:
+        - postfix.log
+        - dovecot.log
+        - opendkim.log
+        - deployment.log
+      changed_when: false
+
+    # ========== END CENTRALIZED LOGGING ==========
 
     - name: Create initial admin domain via API
       uri:
@@ -986,6 +1429,71 @@
       systemd:
         name: nginx
         state: restarted
+
+    - name: restart rsyslog
+      systemd:
+        name: rsyslog
+        state: restarted
+
+    - name: rollback deployment
+      block:
+        - name: "[ROLLBACK] Stop all services"
+          systemd:
+            name: "{{ item }}"
+            state: stopped
+          loop:
+            - postfix
+            - dovecot
+            - opendkim
+            - nginx
+            - mailserver-api
+          ignore_errors: yes
+
+        - name: "[ROLLBACK] Restore from backup"
+          unarchive:
+            src: "{{ backup_file }}"
+            dest: /
+            remote_src: yes
+          when: backup_file is defined and backup_file | length > 0
+
+        - name: "[ROLLBACK] Restart services"
+          systemd:
+            name: "{{ item }}"
+            state: started
+          loop:
+            - mysql
+            - postfix
+            - dovecot
+            - opendkim
+            - nginx
+            - mailserver-api
+          ignore_errors: yes
+
+        - name: "[ROLLBACK] Log rollback action"
+          shell: |
+            logger -t mailrice-deploy "ROLLBACK executed - restored from {{ backup_file | default('unknown') }}"
+            echo "[$(date)] ROLLBACK - Deployment failed, restored from backup" >> /var/log/mailrice/deployment.log
+
+        - name: "[ROLLBACK] Display rollback message"
+          debug:
+            msg: |
+              ========================================
+              DEPLOYMENT ROLLED BACK
+              ========================================
+
+              A deployment error occurred and the system
+              has been restored to its previous state.
+
+              Backup restored from: {{ backup_file | default('N/A') }}
+
+              Next steps:
+              1. Review deployment logs: /var/log/mailrice/
+              2. Fix the underlying issue
+              3. Re-run deployment
+
+              ========================================
+
+      when: backup_file is defined
 
     - name: reload nginx
       systemd:
