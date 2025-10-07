@@ -816,14 +816,15 @@
         login_unix_socket: /var/run/mysqld/mysqld.sock
         login_db: mailserver
         query: |
-          CREATE INDEX IF NOT EXISTS idx_domain ON virtual_domains(name);
-          CREATE INDEX IF NOT EXISTS idx_email ON virtual_users(email);
-          CREATE INDEX IF NOT EXISTS idx_domain_mailboxes ON virtual_users(domain_id);
-          CREATE INDEX IF NOT EXISTS idx_api_key ON api_keys(api_key);
-          CREATE INDEX IF NOT EXISTS idx_active_users ON virtual_users(active);
+          CREATE INDEX idx_domain ON virtual_domains(name);
+          CREATE INDEX idx_email ON virtual_users(email);
+          CREATE INDEX idx_domain_mailboxes ON virtual_users(domain_id);
+          CREATE INDEX idx_api_key ON api_keys(api_key);
+          CREATE INDEX idx_active_users ON virtual_users(active);
           ANALYZE TABLE virtual_domains;
           ANALYZE TABLE virtual_users;
           ANALYZE TABLE api_keys;
+      ignore_errors: yes
 
     - name: "[MONITOR] Create prometheus system user"
       user:
