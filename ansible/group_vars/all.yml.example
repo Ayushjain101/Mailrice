@@ -1,0 +1,36 @@
+---
+# Mailrice v2 Configuration
+# Copy this to all.yml and fill in your values
+
+# Domain Configuration
+main_domain: "example.com"
+hostname: "mail.example.com"
+
+# Cloudflare DNS (leave empty to skip DNS automation)
+cf_email: ""
+cf_api_token: ""
+cf_zone_id: ""
+
+# Database
+db_name: "mailrice"
+db_user: "mailrice"
+db_password: "CHANGE_ME_SECURE_PASSWORD"
+
+# Admin User (created during bootstrap)
+admin_email: "admin@example.com"
+admin_password: "CHANGE_ME_ADMIN_PASSWORD"
+
+# JWT Secret (generate with: openssl rand -base64 32)
+jwt_secret: "CHANGE_ME_JWT_SECRET"
+
+# API Configuration
+api_port: 8000
+
+# Paths
+install_dir: "/opt/mailrice"
+vmail_dir: "/var/vmail"
+dkim_keys_dir: "/etc/opendkim/keys"
+
+# Versions
+python_version: "3.11"
+node_version: "20"

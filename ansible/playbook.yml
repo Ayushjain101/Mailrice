@@ -1,0 +1,486 @@
+---
+# Mailrice v2 - One-Command Deployment
+# Deploys complete email platform on Ubuntu 22.04/24.04
+
+- name: Deploy Mailrice v2
+  hosts: mailserver
+  become: yes
+  gather_facts: yes
+
+  vars:
+    # These should be overridden in group_vars/all.yml or via --extra-vars
+    main_domain: "{{ main_domain | default('example.com') }}"
+    hostname: "{{ hostname | default('mail.example.com') }}"
+    db_password: "{{ db_password | default(lookup('password', '/dev/null length=32 chars=ascii_letters,digits')) }}"
+    jwt_secret: "{{ jwt_secret | default(lookup('password', '/dev/null length=64 chars=ascii_letters,digits')) }}"
+    admin_email: "{{ admin_email | default('admin@' + main_domain) }}"
+    admin_password: "{{ admin_password | default(lookup('password', '/dev/null length=16 chars=ascii_letters,digits')) }}"
+
+  pre_tasks:
+    - name: Display deployment info
+      debug:
+        msg: |
+          ========================================
+          Mailrice v2 Deployment
+          ========================================
+          Domain: {{ main_domain }}
+          Hostname: {{ hostname }}
+          Admin Email: {{ admin_email }}
+          ========================================
+
+    - name: Validate system requirements
+      assert:
+        that:
+          - ansible_memtotal_mb >= 2048
+          - ansible_distribution == 'Ubuntu'
+          - ansible_distribution_major_version in ['22', '24']
+        fail_msg: "System does not meet requirements (Ubuntu 22.04/24.04, 2GB+ RAM)"
+
+  tasks:
+    # ==================== System Setup ====================
+
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install system dependencies
+      apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg
+          - software-properties-common
+          - git
+          - ufw
+          - acl
+          - python3-pip
+          - python3-venv
+          - build-essential
+          - libpq-dev
+        state: present
+
+    # ==================== PostgreSQL ====================
+
+    - name: Install PostgreSQL
+      apt:
+        name:
+          - postgresql
+          - postgresql-contrib
+          - python3-psycopg2
+        state: present
+
+    - name: Ensure PostgreSQL is running
+      systemd:
+        name: postgresql
+        state: started
+        enabled: yes
+
+    - name: Create PostgreSQL database
+      become_user: postgres
+      postgresql_db:
+        name: "{{ db_name | default('mailrice') }}"
+        encoding: UTF8
+        state: present
+
+    - name: Create PostgreSQL user
+      become_user: postgres
+      postgresql_user:
+        name: "{{ db_user | default('mailrice') }}"
+        password: "{{ db_password }}"
+        db: "{{ db_name | default('mailrice') }}"
+        priv: ALL
+        state: present
+
+    # ==================== Redis ====================
+
+    - name: Install Redis
+      apt:
+        name: redis-server
+        state: present
+
+    - name: Ensure Redis is running
+      systemd:
+        name: redis-server
+        state: started
+        enabled: yes
+
+    # ==================== Nginx ====================
+
+    - name: Install Nginx
+      apt:
+        name: nginx
+        state: present
+
+    - name: Remove default Nginx site
+      file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+
+    # ==================== Certbot ====================
+
+    - name: Install Certbot
+      apt:
+        name:
+          - certbot
+          - python3-certbot-nginx
+          - python3-certbot-dns-cloudflare
+        state: present
+
+    - name: Create Cloudflare credentials file (if configured)
+      copy:
+        content: |
+          dns_cloudflare_email = {{ cf_email }}
+          dns_cloudflare_api_token = {{ cf_api_token }}
+        dest: /root/.secrets/cloudflare.ini
+        mode: '0600'
+      when: cf_api_token is defined and cf_api_token | length > 0
+
+    - name: Obtain SSL certificate (DNS-01 via Cloudflare)
+      command: >
+        certbot certonly --dns-cloudflare
+        --dns-cloudflare-credentials /root/.secrets/cloudflare.ini
+        --non-interactive --agree-tos
+        --email {{ admin_email }}
+        -d {{ hostname }}
+        --deploy-hook "systemctl reload nginx postfix dovecot"
+      args:
+        creates: "/etc/letsencrypt/live/{{ hostname }}/fullchain.pem"
+      when: cf_api_token is defined and cf_api_token | length > 0
+      register: certbot_result
+      failed_when: false
+
+    # ==================== Mailrice API ====================
+
+    - name: Create mailrice system user
+      user:
+        name: mailrice
+        system: yes
+        create_home: no
+        shell: /usr/sbin/nologin
+
+    - name: Create installation directory
+      file:
+        path: "{{ install_dir | default('/opt/mailrice') }}"
+        state: directory
+        owner: mailrice
+        group: mailrice
+        mode: '0755'
+
+    - name: Copy API application
+      synchronize:
+        src: "{{ playbook_dir }}/../apps/api/"
+        dest: "{{ install_dir }}/api/"
+        delete: yes
+        rsync_opts:
+          - "--exclude=__pycache__"
+          - "--exclude=*.pyc"
+          - "--exclude=.env"
+
+    - name: Set ownership of API directory
+      file:
+        path: "{{ install_dir }}/api"
+        owner: mailrice
+        group: mailrice
+        recurse: yes
+
+    - name: Create Python virtual environment
+      command: python3 -m venv {{ install_dir }}/api/venv
+      args:
+        creates: "{{ install_dir }}/api/venv/bin/python"
+      become_user: mailrice
+
+    - name: Install Python dependencies
+      pip:
+        requirements: "{{ install_dir }}/api/requirements.txt"
+        virtualenv: "{{ install_dir }}/api/venv"
+      become_user: mailrice
+
+    - name: Create .env file
+      copy:
+        content: |
+          APP_NAME="Mailrice v2"
+          APP_VERSION="2.0.0"
+          DEBUG=false
+          DATABASE_URL=postgresql://{{ db_user | default('mailrice') }}:{{ db_password }}@localhost/{{ db_name | default('mailrice') }}
+          REDIS_URL=redis://localhost:6379/0
+          JWT_SECRET={{ jwt_secret }}
+          JWT_ALGORITHM=HS256
+          JWT_EXPIRATION_MINUTES=1440
+          API_KEY_PREFIX=mr_live_
+          CF_EMAIL={{ cf_email | default('') }}
+          CF_API_TOKEN={{ cf_api_token | default('') }}
+          CF_ZONE_ID={{ cf_zone_id | default('') }}
+          MAIN_DOMAIN={{ main_domain }}
+          HOSTNAME={{ hostname }}
+          POSTFIX_CONFIG_PATH=/etc/postfix
+          DOVECOT_CONFIG_PATH=/etc/dovecot
+          DKIM_KEYS_PATH=/etc/opendkim/keys
+          VMAIL_PATH=/var/vmail
+          BCRYPT_ROUNDS=12
+        dest: "{{ install_dir }}/api/.env"
+        owner: mailrice
+        group: mailrice
+        mode: '0600'
+
+    - name: Run database migrations
+      command: "{{ install_dir }}/api/venv/bin/alembic upgrade head"
+      args:
+        chdir: "{{ install_dir }}/api"
+      become_user: mailrice
+
+    - name: Create systemd service for API
+      copy:
+        content: |
+          [Unit]
+          Description=Mailrice API
+          After=network.target postgresql.service redis.service
+          Wants=postgresql.service redis.service
+
+          [Service]
+          Type=notify
+          User=mailrice
+          Group=mailrice
+          WorkingDirectory={{ install_dir }}/api
+          Environment="PATH={{ install_dir }}/api/venv/bin"
+          ExecStart={{ install_dir }}/api/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port {{ api_port | default(8000) }}
+          Restart=always
+          RestartSec=10
+
+          # Security
+          NoNewPrivileges=true
+          PrivateTmp=true
+          ProtectSystem=strict
+          ProtectHome=true
+          ReadWritePaths={{ install_dir }}
+
+          [Install]
+          WantedBy=multi-user.target
+        dest: /etc/systemd/system/mailrice-api.service
+        mode: '0644'
+
+    - name: Reload systemd
+      systemd:
+        daemon_reload: yes
+
+    - name: Enable and start Mailrice API
+      systemd:
+        name: mailrice-api
+        enabled: yes
+        state: started
+
+    - name: Wait for API to be ready
+      uri:
+        url: "http://127.0.0.1:{{ api_port | default(8000) }}/api/health"
+        status_code: 200
+      register: api_health
+      until: api_health.status == 200
+      retries: 30
+      delay: 2
+
+    # ==================== Nginx Configuration ====================
+
+    - name: Configure Nginx for API
+      copy:
+        content: |
+          server {
+              listen 80;
+              listen [::]:80;
+              server_name {{ hostname }};
+
+              location / {
+                  return 301 https://$server_name$request_uri;
+              }
+
+              location /.well-known/acme-challenge/ {
+                  root /var/www/html;
+              }
+          }
+
+          server {
+              listen 443 ssl http2;
+              listen [::]:443 ssl http2;
+              server_name {{ hostname }};
+
+              ssl_certificate /etc/letsencrypt/live/{{ hostname }}/fullchain.pem;
+              ssl_certificate_key /etc/letsencrypt/live/{{ hostname }}/privkey.pem;
+              ssl_protocols TLSv1.2 TLSv1.3;
+              ssl_ciphers HIGH:!aNULL:!MD5;
+
+              location /api {
+                  proxy_pass http://127.0.0.1:{{ api_port | default(8000) }};
+                  proxy_set_header Host $host;
+                  proxy_set_header X-Real-IP $remote_addr;
+                  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto $scheme;
+              }
+
+              location / {
+                  root /var/www/html;
+                  try_files $uri $uri/ =404;
+              }
+          }
+        dest: /etc/nginx/sites-available/mailrice
+        mode: '0644'
+      when: certbot_result is succeeded
+
+    - name: Enable Nginx site
+      file:
+        src: /etc/nginx/sites-available/mailrice
+        dest: /etc/nginx/sites-enabled/mailrice
+        state: link
+      when: certbot_result is succeeded
+
+    - name: Test Nginx configuration
+      command: nginx -t
+      register: nginx_test
+      failed_when: false
+
+    - name: Reload Nginx
+      systemd:
+        name: nginx
+        state: reloaded
+      when: nginx_test.rc == 0
+
+    # ==================== Firewall ====================
+
+    - name: Configure UFW - Allow SSH
+      ufw:
+        rule: allow
+        port: '22'
+        proto: tcp
+
+    - name: Configure UFW - Allow HTTP
+      ufw:
+        rule: allow
+        port: '80'
+        proto: tcp
+
+    - name: Configure UFW - Allow HTTPS
+      ufw:
+        rule: allow
+        port: '443'
+        proto: tcp
+
+    - name: Enable UFW
+      ufw:
+        state: enabled
+        policy: deny
+
+    # ==================== Bootstrap Admin User ====================
+
+    - name: Check if admin user exists
+      shell: >
+        {{ install_dir }}/api/venv/bin/python -c "
+        from app.database import SessionLocal;
+        from app.models import User;
+        db = SessionLocal();
+        exists = db.query(User).filter(User.email == '{{ admin_email }}').first();
+        print('exists' if exists else 'not_exists')
+        "
+      args:
+        chdir: "{{ install_dir }}/api"
+      register: admin_check
+      changed_when: false
+
+    - name: Bootstrap admin user
+      shell: |
+        {{ install_dir }}/api/venv/bin/python << 'PYEOF'
+        from app.database import SessionLocal
+        from app.models import Tenant, Workspace, User
+        from app.auth import hash_password
+
+        db = SessionLocal()
+
+        # Create tenant
+        tenant = Tenant(name="Default")
+        db.add(tenant)
+        db.commit()
+        db.refresh(tenant)
+
+        # Create workspace
+        workspace = Workspace(tenant_id=tenant.id, name="Default")
+        db.add(workspace)
+        db.commit()
+
+        # Create admin user
+        user = User(
+            tenant_id=tenant.id,
+            email="{{ admin_email }}",
+            password_hash=hash_password("{{ admin_password }}"),
+            role="owner"
+        )
+        db.add(user)
+        db.commit()
+
+        print(f"✓ Created tenant: {tenant.id}")
+        print(f"✓ Created workspace: {workspace.id}")
+        print(f"✓ Created admin user: {user.email}")
+
+        db.close()
+        PYEOF
+      args:
+        chdir: "{{ install_dir }}/api"
+      when: "'not_exists' in admin_check.stdout"
+      register: bootstrap_result
+
+    - name: Save credentials
+      copy:
+        content: |
+          ========================================
+          Mailrice v2 - Deployment Credentials
+          ========================================
+          Generated: {{ ansible_date_time.iso8601 }}
+
+          API URL: https://{{ hostname }}/api
+          Admin Email: {{ admin_email }}
+          Admin Password: {{ admin_password }}
+
+          Database: {{ db_name }}
+          Database User: {{ db_user }}
+          Database Password: {{ db_password }}
+
+          JWT Secret: {{ jwt_secret }}
+
+          ========================================
+          Next Steps:
+          ========================================
+          1. Login: curl -X POST https://{{ hostname }}/api/auth/login \
+               -H "Content-Type: application/json" \
+               -d '{"email":"{{ admin_email }}","password":"{{ admin_password }}"}'
+
+          2. Create API key: Use JWT from step 1 to call POST /api/apikeys
+
+          3. Test health: curl https://{{ hostname }}/api/health
+
+          ========================================
+        dest: /root/.mailrice-credentials.txt
+        mode: '0600'
+
+  post_tasks:
+    - name: Display success message
+      debug:
+        msg: |
+          ========================================
+          ✓ Mailrice v2 Deployed Successfully!
+          ========================================
+
+          API URL: https://{{ hostname }}/api
+          Health: https://{{ hostname }}/api/health
+          Docs: https://{{ hostname }}/api/docs
+
+          Admin Email: {{ admin_email }}
+          Admin Password: {{ admin_password }}
+
+          Credentials saved to: /root/.mailrice-credentials.txt
+
+          ========================================
+          Next Steps:
+          ========================================
+          1. Test API: curl https://{{ hostname }}/api/health
+          2. Login and get JWT token
+          3. Create your first API key
+          4. Deploy mail stack (coming in Session 2!)
+
+          ========================================

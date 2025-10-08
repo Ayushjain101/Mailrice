@@ -33,3 +33,27 @@ inventory.ini
 *.pem
 *_credentials
 .env.local
+.env
+cloudflare.ini
+credentials.txt
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+.venv
+*.egg-info/
+dist/
+build/
+
+# Database
+*.db
+*.sqlite
+
+# Ansible
+ansible/group_vars/all.yml
