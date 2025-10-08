@@ -1,0 +1,123 @@
+---
+# Dashboard Deployment Role
+# Builds React dashboard and deploys to Nginx
+
+- name: Install Node.js prerequisites
+  apt:
+    name:
+      - curl
+      - ca-certificates
+      - gnupg
+    state: present
+
+- name: Add NodeSource GPG key
+  apt_key:
+    url: https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key
+    state: present
+
+- name: Add NodeSource repository for Node.js 20.x
+  apt_repository:
+    repo: "deb https://deb.nodesource.com/node_20.x nodistro main"
+    state: present
+    filename: nodesource
+
+- name: Install Node.js
+  apt:
+    name: nodejs
+    state: present
+    update_cache: yes
+
+- name: Verify Node.js installation
+  command: node --version
+  register: node_version
+  changed_when: false
+
+- name: Display Node.js version
+  debug:
+    msg: "Node.js {{ node_version.stdout }} installed"
+
+- name: Create dashboard web directory
+  file:
+    path: /var/www/mailrice
+    state: directory
+    owner: www-data
+    group: www-data
+    mode: '0755'
+
+- name: Copy dashboard source to server
+  synchronize:
+    src: "{{ playbook_dir }}/../apps/dashboard/"
+    dest: /tmp/mailrice-dashboard/
+    delete: yes
+    rsync_opts:
+      - "--exclude=node_modules"
+      - "--exclude=dist"
+      - "--exclude=.env"
+
+- name: Create dashboard .env file
+  copy:
+    content: |
+      VITE_API_BASE_URL=https://{{ hostname }}/api
+      VITE_APP_NAME=Mailrice Dashboard
+      VITE_APP_VERSION=2.0.0
+    dest: /tmp/mailrice-dashboard/.env
+    mode: '0644'
+
+- name: Install dashboard dependencies
+  command: npm install
+  args:
+    chdir: /tmp/mailrice-dashboard
+  register: npm_install
+  changed_when: npm_install.rc == 0
+  environment:
+    NODE_ENV: production
+
+- name: Build dashboard for production
+  command: npm run build
+  args:
+    chdir: /tmp/mailrice-dashboard
+  register: npm_build
+  changed_when: npm_build.rc == 0
+  environment:
+    NODE_ENV: production
+
+- name: Display build output
+  debug:
+    msg: "Dashboard built successfully"
+  when: npm_build.rc == 0
+
+- name: Copy built files to web directory
+  synchronize:
+    src: /tmp/mailrice-dashboard/dist/
+    dest: /var/www/mailrice/
+    delete: yes
+    rsync_opts:
+      - "--chown=www-data:www-data"
+  delegate_to: "{{ inventory_hostname }}"
+
+- name: Set permissions on web directory
+  file:
+    path: /var/www/mailrice
+    owner: www-data
+    group: www-data
+    recurse: yes
+    mode: '0755'
+
+- name: Ensure index.html exists
+  stat:
+    path: /var/www/mailrice/index.html
+  register: index_html
+
+- name: Fail if dashboard build failed
+  fail:
+    msg: "Dashboard build failed - index.html not found"
+  when: not index_html.stat.exists
+
+- name: Display dashboard deployment success
+  debug:
+    msg: |
+      ========================================
+      Dashboard deployed successfully!
+      URL: https://{{ hostname }}
+      Location: /var/www/mailrice
+      ========================================
