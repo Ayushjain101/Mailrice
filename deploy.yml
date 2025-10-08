@@ -825,13 +825,17 @@
         dest: /opt/mailserver-dashboard/docs/
         mode: '0644'
 
-    - name: Create webroot directory for SSL certificate acquisition
+    # ========== SSL CERTIFICATE ACQUISITION (EARLY - V2 Improvement) ==========
+    # Moving SSL acquisition earlier prevents nginx/service misconfigurations
+    # If DNS is not ready, deployment fails fast before configuring services
+
+    - name: "[SSL-EARLY] Create webroot directory for SSL certificate acquisition"
       file:
         path: /var/www/html
         state: directory
         mode: '0755'
 
-    - name: Create DNS A record for mail hostname via Cloudflare
+    - name: "[SSL-EARLY] Create DNS A record for mail hostname via Cloudflare"
       uri:
         url: "https://api.cloudflare.com/client/v4/zones/{{ cf_zone_id }}/dns_records"
         method: POST
@@ -851,7 +855,7 @@
       ignore_errors: yes
       register: dns_hostname_result
 
-    - name: Create DNS A record for dashboard subdomain via Cloudflare
+    - name: "[SSL-EARLY] Create DNS A record for dashboard subdomain via Cloudflare"
       uri:
         url: "https://api.cloudflare.com/client/v4/zones/{{ cf_zone_id }}/dns_records"
         method: POST
@@ -871,12 +875,12 @@
       ignore_errors: yes
       register: dns_dashboard_result
 
-    - name: Wait for DNS propagation
+    - name: "[SSL-EARLY] Wait for DNS propagation"
       pause:
         seconds: 30
       when: (dns_hostname_result is changed or dns_dashboard_result is changed) and (dns_hostname_result is not failed and dns_dashboard_result is not failed)
 
-    - name: Create temporary HTTP-only nginx config for certbot
+    - name: "[SSL-EARLY] Create temporary HTTP-only nginx config for certbot"
       copy:
         dest: /etc/nginx/sites-available/certbot-temp
         content: |
@@ -897,48 +901,24 @@
           }
         mode: '0644'
 
-    - name: Enable temporary nginx config
+    - name: "[SSL-EARLY] Remove default Nginx site before certbot"
+      file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+
+    - name: "[SSL-EARLY] Enable temporary nginx config"
       file:
         src: /etc/nginx/sites-available/certbot-temp
         dest: /etc/nginx/sites-enabled/certbot-temp
         state: link
 
-    - name: Configure Nginx for Dashboard subdomain
-      template:
-        src: templates/nginx-dashboard.conf.j2
-        dest: /etc/nginx/sites-available/mailserver-dashboard
-      notify: restart nginx
+    - name: "[SSL-EARLY] Start Nginx for certificate acquisition"
+      systemd:
+        name: nginx
+        state: restarted
+        enabled: yes
 
-    - name: Enable Dashboard Nginx site
-      file:
-        src: /etc/nginx/sites-available/mailserver-dashboard
-        dest: /etc/nginx/sites-enabled/mailserver-dashboard
-        state: link
-      notify: restart nginx
-
-    - name: Configure Nginx reverse proxy for API
-      template:
-        src: templates/nginx-api.conf.j2
-        dest: /etc/nginx/sites-available/mailserver-api
-      notify: restart nginx
-
-    - name: Enable Nginx site
-      file:
-        src: /etc/nginx/sites-available/mailserver-api
-        dest: /etc/nginx/sites-enabled/mailserver-api
-        state: link
-      notify: restart nginx
-
-    - name: Remove default Nginx site
-      file:
-        path: /etc/nginx/sites-enabled/default
-        state: absent
-      notify: restart nginx
-
-    - name: Force Nginx restart before SSL certificate acquisition
-      meta: flush_handlers
-
-    - name: Wait for Nginx to be ready
+    - name: "[SSL-EARLY] Wait for Nginx to be ready"
       wait_for:
         port: 80
         timeout: 30
@@ -977,28 +957,14 @@
       delay: 30
       ignore_errors: yes
 
-    - name: Reload Nginx after SSL certificate acquisition
-      systemd:
-        name: nginx
-        state: reloaded
-      when: (certbot_result is succeeded or certbot_dashboard_result is succeeded) and (certbot_result is changed or certbot_dashboard_result is changed)
-      ignore_errors: yes
-
-    - name: Remove temporary certbot nginx config
-      file:
-        path: /etc/nginx/sites-enabled/certbot-temp
-        state: absent
-      when: certbot_result is succeeded or certbot_dashboard_result is succeeded
-      notify: reload nginx
-
-    - name: Create certbot renewal hook directory
+    - name: "[SSL] Create certbot renewal hook directory"
       file:
         path: /etc/letsencrypt/renewal-hooks/deploy
         state: directory
         mode: '0755'
       when: certbot_result is succeeded
 
-    - name: Create renewal hook script
+    - name: "[SSL] Create renewal hook script"
       copy:
         dest: /etc/letsencrypt/renewal-hooks/deploy/reload-mail-services.sh
         mode: '0755'
@@ -1007,7 +973,7 @@
           systemctl reload postfix dovecot nginx
       when: certbot_result is succeeded
 
-    - name: Update Postfix to use Let's Encrypt certificates
+    - name: "[SSL] Update Postfix to use Let's Encrypt certificates"
       lineinfile:
         path: /etc/postfix/main.cf
         regexp: "{{ item.regexp }}"
@@ -1018,7 +984,7 @@
       when: certbot_result is succeeded
       notify: restart postfix
 
-    - name: Configure Dovecot SSL
+    - name: "[SSL] Configure Dovecot SSL"
       blockinfile:
         path: /etc/dovecot/conf.d/10-ssl.conf
         create: yes
@@ -1031,6 +997,47 @@
           ssl_prefer_server_ciphers = yes
       when: certbot_result is succeeded
       notify: restart dovecot
+
+    - name: "[SSL] Remove temporary certbot nginx config"
+      file:
+        path: /etc/nginx/sites-enabled/certbot-temp
+        state: absent
+
+    # ========== END SSL CERTIFICATE ACQUISITION ==========
+
+    # ========== NGINX FINAL CONFIGURATION (AFTER SSL) ==========
+    # Now that SSL certificates exist, configure nginx with SSL enabled
+
+    - name: Configure Nginx for Dashboard subdomain
+      template:
+        src: templates/nginx-dashboard.conf.j2
+        dest: /etc/nginx/sites-available/mailserver-dashboard
+      notify: restart nginx
+
+    - name: Enable Dashboard Nginx site
+      file:
+        src: /etc/nginx/sites-available/mailserver-dashboard
+        dest: /etc/nginx/sites-enabled/mailserver-dashboard
+        state: link
+      notify: restart nginx
+
+    - name: Configure Nginx reverse proxy for API
+      template:
+        src: templates/nginx-api.conf.j2
+        dest: /etc/nginx/sites-available/mailserver-api
+      notify: restart nginx
+
+    - name: Enable Nginx site
+      file:
+        src: /etc/nginx/sites-available/mailserver-api
+        dest: /etc/nginx/sites-enabled/mailserver-api
+        state: link
+      notify: restart nginx
+
+    - name: Reload Nginx with final SSL configuration
+      systemd:
+        name: nginx
+        state: reloaded
 
     - name: Reload systemd daemon
       systemd:
