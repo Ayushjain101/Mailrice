@@ -239,7 +239,7 @@
           Wants=postgresql.service redis.service
 
           [Service]
-          Type=notify
+          Type=simple
           User=mailrice
           Group=mailrice
           WorkingDirectory={{ install_dir }}/api

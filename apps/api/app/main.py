@@ -2,13 +2,17 @@
 Mailrice v2 - FastAPI Application
 Production email platform with multi-tenancy
 """
-from fastapi import FastAPI, Depends, HTTPException, status, Header
+from fastapi import FastAPI, Depends, HTTPException, status, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from typing import Optional
 import logging
+
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 from app.config import settings
 from app.database import get_db
@@ -20,6 +24,9 @@ from app.routes_mailboxes import router as mailboxes_router
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Rate limiter
+limiter = Limiter(key_func=get_remote_address)
+
 # Create FastAPI app
 app = FastAPI(
     title=settings.APP_NAME,
@@ -29,13 +36,21 @@ app = FastAPI(
     openapi_url="/api/openapi.json"
 )
 
-# CORS
+# Add rate limiter to app state
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# CORS - Configured for production security
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure properly in production
+    allow_origins=[
+        f"https://{settings.HOSTNAME}",  # Production dashboard
+        "http://localhost:5173",          # Local development
+        "http://localhost:3000",          # Alternative local dev
+    ],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
+    allow_headers=["Content-Type", "Authorization"],
 )
 
 # Include routers
@@ -188,15 +203,20 @@ class LoginResponse(BaseModel):
 
 
 @app.post("/api/auth/login", response_model=LoginResponse)
-def login(request: LoginRequest, db: Session = Depends(get_db)):
+@limiter.limit("5/minute")  # Max 5 login attempts per minute per IP
+async def login(
+    request: Request,
+    login_request: LoginRequest,
+    db: Session = Depends(get_db)
+):
     """
     Login with email/password
-    Returns JWT token
+    Returns JWT token (rate limited: 5 attempts per minute)
     """
     # Find user
-    user = db.query(models.User).filter(models.User.email == request.email).first()
+    user = db.query(models.User).filter(models.User.email == login_request.email).first()
 
-    if not user or not auth.verify_password(request.password, user.password_hash):
+    if not user or not auth.verify_password(login_request.password, user.password_hash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password"
