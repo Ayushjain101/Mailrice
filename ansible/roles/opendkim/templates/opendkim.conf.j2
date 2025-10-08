@@ -1,0 +1,27 @@
+# OpenDKIM Configuration - Mailrice v2
+
+# Logging
+Syslog yes
+SyslogSuccess yes
+LogWhy yes
+
+# Common signing options
+Canonicalization relaxed/simple
+Mode sv
+SubDomains no
+
+# Socket for Postfix
+Socket inet:8891@localhost
+
+# User/Group
+UserID opendkim:opendkim
+UMask 002
+
+# Keys and domains
+KeyTable refile:/etc/opendkim/KeyTable
+SigningTable refile:/etc/opendkim/SigningTable
+ExternalIgnoreList refile:/etc/opendkim/TrustedHosts
+InternalHosts refile:/etc/opendkim/TrustedHosts
+
+# Security
+RequireSafeKeys false

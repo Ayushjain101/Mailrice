@@ -1,0 +1,67 @@
+---
+# OpenDKIM Installation and Configuration
+
+- name: Install OpenDKIM
+  apt:
+    name:
+      - opendkim
+      - opendkim-tools
+    state: present
+
+- name: Create OpenDKIM directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: opendkim
+    group: opendkim
+    mode: '0750'
+  loop:
+    - /etc/opendkim
+    - /etc/opendkim/keys
+
+- name: Configure OpenDKIM
+  template:
+    src: opendkim.conf.j2
+    dest: /etc/opendkim.conf
+    owner: root
+    group: root
+    mode: '0644'
+  notify: restart opendkim
+
+- name: Create TrustedHosts file
+  template:
+    src: TrustedHosts.j2
+    dest: /etc/opendkim/TrustedHosts
+    owner: opendkim
+    group: opendkim
+    mode: '0644'
+  notify: restart opendkim
+
+- name: Create empty KeyTable if not exists
+  file:
+    path: /etc/opendkim/KeyTable
+    state: touch
+    owner: opendkim
+    group: opendkim
+    mode: '0640'
+
+- name: Create empty SigningTable if not exists
+  file:
+    path: /etc/opendkim/SigningTable
+    state: touch
+    owner: opendkim
+    group: opendkim
+    mode: '0640'
+
+- name: Set OpenDKIM socket configuration
+  lineinfile:
+    path: /etc/default/opendkim
+    regexp: '^SOCKET='
+    line: 'SOCKET="inet:8891@localhost"'
+    create: yes
+
+- name: Ensure OpenDKIM is enabled and started
+  systemd:
+    name: opendkim
+    enabled: yes
+    state: started

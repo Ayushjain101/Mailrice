@@ -1,0 +1,135 @@
+# Dovecot Configuration - Mailrice v2
+
+# Protocols
+protocols = imap lmtp
+
+# Listening
+listen = *, ::
+
+# Base directory
+base_dir = /var/run/dovecot/
+
+# Login settings
+login_greeting = Mailrice Ready.
+
+# Enable mail user/group
+mail_uid = vmail
+mail_gid = vmail
+first_valid_uid = 5000
+last_valid_uid = 5000
+
+# Mail location
+mail_location = maildir:/var/vmail/%d/%n
+mail_home = /var/vmail/%d/%n
+
+# Namespace
+namespace inbox {
+  inbox = yes
+
+  mailbox Drafts {
+    special_use = \Drafts
+    auto = subscribe
+  }
+  mailbox Sent {
+    special_use = \Sent
+    auto = subscribe
+  }
+  mailbox Trash {
+    special_use = \Trash
+    auto = subscribe
+  }
+  mailbox Spam {
+    special_use = \Junk
+    auto = subscribe
+  }
+}
+
+# Logging
+log_path = /var/log/dovecot.log
+info_log_path = /var/log/dovecot-info.log
+debug_log_path = /var/log/dovecot-debug.log
+
+# SSL/TLS
+ssl = required
+ssl_cert = </etc/letsencrypt/live/{{ hostname }}/fullchain.pem
+ssl_key = </etc/letsencrypt/live/{{ hostname }}/privkey.pem
+ssl_min_protocol = TLSv1.2
+ssl_cipher_list = HIGH:!aNULL:!MD5
+ssl_prefer_server_ciphers = yes
+
+# Authentication
+disable_plaintext_auth = yes
+auth_mechanisms = plain login
+
+# Passdb (PostgreSQL)
+passdb {
+  driver = sql
+  args = /etc/dovecot/dovecot-sql.conf.ext
+}
+
+# Userdb (PostgreSQL)
+userdb {
+  driver = sql
+  args = /etc/dovecot/dovecot-sql.conf.ext
+}
+
+# LMTP service for Postfix
+service lmtp {
+  unix_listener /var/spool/postfix/private/dovecot-lmtp {
+    mode = 0600
+    user = postfix
+    group = postfix
+  }
+}
+
+# Auth service for Postfix SASL
+service auth {
+  unix_listener /var/spool/postfix/private/auth {
+    mode = 0660
+    user = postfix
+    group = postfix
+  }
+
+  unix_listener auth-userdb {
+    mode = 0600
+    user = vmail
+    group = vmail
+  }
+
+  user = dovecot
+}
+
+# Auth worker
+service auth-worker {
+  user = vmail
+}
+
+# IMAP service
+service imap-login {
+  inet_listener imap {
+    port = 143
+  }
+  inet_listener imaps {
+    port = 993
+    ssl = yes
+  }
+}
+
+# Mailbox quota
+plugin {
+  quota = maildir:User quota
+  quota_rule = *:storage=1G
+  quota_rule2 = Trash:storage=+100M
+}
+
+# Mail plugins
+mail_plugins = $mail_plugins quota
+
+protocol imap {
+  mail_plugins = $mail_plugins imap_quota
+}
+
+protocol lmtp {
+  mail_plugins = $mail_plugins quota
+  postmaster_address = postmaster@{{ main_domain }}
+}

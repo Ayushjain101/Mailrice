@@ -1,0 +1,92 @@
+# Postfix Master Configuration - Mailrice v2
+# Service definitions
+
+# SMTP (port 25)
+smtp      inet  n       -       y       -       -       smtpd
+
+# Submission (port 587) - STARTTLS
+submission inet n       -       y       -       -       smtpd
+  -o syslog_name=postfix/submission
+  -o smtpd_tls_security_level=encrypt
+  -o smtpd_sasl_auth_enable=yes
+  -o smtpd_tls_auth_only=yes
+  -o smtpd_reject_unlisted_recipient=no
+  -o smtpd_client_restrictions=permit_sasl_authenticated,reject
+  -o smtpd_helo_restrictions=permit_sasl_authenticated
+  -o smtpd_sender_restrictions=permit_sasl_authenticated
+  -o smtpd_relay_restrictions=permit_sasl_authenticated,reject
+  -o smtpd_recipient_restrictions=permit_sasl_authenticated,reject_non_fqdn_recipient
+  -o milter_macro_daemon_name=ORIGINATING
+
+# SMTPS (port 465) - SSL/TLS wrapper
+smtps     inet  n       -       y       -       -       smtpd
+  -o syslog_name=postfix/smtps
+  -o smtpd_tls_wrappermode=yes
+  -o smtpd_sasl_auth_enable=yes
+  -o smtpd_reject_unlisted_recipient=no
+  -o smtpd_client_restrictions=permit_sasl_authenticated,reject
+  -o smtpd_helo_restrictions=permit_sasl_authenticated
+  -o smtpd_sender_restrictions=permit_sasl_authenticated
+  -o smtpd_relay_restrictions=permit_sasl_authenticated,reject
+  -o smtpd_recipient_restrictions=permit_sasl_authenticated,reject_non_fqdn_recipient
+  -o milter_macro_daemon_name=ORIGINATING
+
+# Pickup and cleanup
+pickup    unix  n       -       y       60      1       pickup
+cleanup   unix  n       -       y       -       0       cleanup
+
+# Queue manager
+qmgr      unix  n       -       n       300     1       qmgr
+
+# TLS manager
+tlsmgr    unix  -       -       y       1000?   1       tlsmgr
+
+# Rewrite
+rewrite   unix  -       -       y       -       -       trivial-rewrite
+
+# Bounce
+bounce    unix  -       -       y       -       0       bounce
+defer     unix  -       -       y       -       0       bounce
+trace     unix  -       -       y       -       0       bounce
+verify    unix  -       -       y       -       1       verify
+
+# Flush
+flush     unix  n       -       y       1000?   0       flush
+
+# Proxymap
+proxymap  unix  -       -       n       -       -       proxymap
+proxywrite unix -       -       n       -       1       proxymap
+
+# SMTP client
+smtp      unix  -       -       y       -       -       smtp
+relay     unix  -       -       y       -       -       smtp
+
+# Show queue
+showq     unix  n       -       y       -       -       showq
+
+# Error reports
+error     unix  -       -       y       -       -       error
+retry     unix  -       -       y       -       -       error
+discard   unix  -       -       y       -       -       discard
+
+# Local delivery
+local     unix  -       n       n       -       -       local
+
+# Virtual delivery
+virtual   unix  -       n       n       -       -       virtual
+
+# LMTP client
+lmtp      unix  -       -       y       -       -       lmtp
+
+# Anvil
+anvil     unix  -       -       y       -       1       anvil
+
+# Scache
+scache    unix  -       -       y       -       1       scache
+
+# Postlog
+postlog   unix-dgram n  -       n       -       1       postlogd
+
+# Maildrop
+maildrop  unix  -       n       n       -       -       pipe
+  flags=DRhu user=vmail argv=/usr/bin/maildrop -d ${recipient}

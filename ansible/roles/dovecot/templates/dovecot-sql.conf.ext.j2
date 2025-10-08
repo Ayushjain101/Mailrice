@@ -1,0 +1,33 @@
+# Dovecot PostgreSQL Configuration
+
+driver = pgsql
+connect = host=localhost dbname={{ db_name }} user={{ db_user }} password={{ db_password }}
+
+# Default password scheme
+default_pass_scheme = ARGON2ID
+
+# Password query
+password_query = \
+  SELECT m.local_part || '@' || d.domain as user, m.password_hash as password \
+  FROM mailboxes m \
+  JOIN domains d ON m.domain_id = d.id \
+  WHERE m.local_part = '%n' AND d.domain = '%d' AND m.status = 'active'
+
+# User query
+user_query = \
+  SELECT \
+    '/var/vmail/%d/%n' as home, \
+    'maildir:/var/vmail/%d/%n' as mail, \
+    5000 AS uid, \
+    5000 AS gid, \
+    CONCAT('*:storage=', m.quota_mb, 'M') AS quota_rule \
+  FROM mailboxes m \
+  JOIN domains d ON m.domain_id = d.id \
+  WHERE m.local_part = '%n' AND d.domain = '%d' AND m.status = 'active'
+
+# Iterate query (for doveadm)
+iterate_query = \
+  SELECT m.local_part || '@' || d.domain as user \
+  FROM mailboxes m \
+  JOIN domains d ON m.domain_id = d.id \
+  WHERE m.status = 'active'

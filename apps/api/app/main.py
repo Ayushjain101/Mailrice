@@ -6,12 +6,15 @@ from fastapi import FastAPI, Depends, HTTPException, status, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 from typing import Optional
 import logging
 
 from app.config import settings
 from app.database import get_db
 from app import models, auth
+from app.routes_domains import router as domains_router
+from app.routes_mailboxes import router as mailboxes_router
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -34,6 +37,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Include routers
+app.include_router(domains_router)
+app.include_router(mailboxes_router)
 
 
 # ==================== Dependency: Authentication ====================
@@ -133,7 +140,7 @@ def health_check(db: Session = Depends(get_db)):
     """
     try:
         # Test database connection
-        db.execute(models.text("SELECT 1"))
+        db.execute(text("SELECT 1"))
         return {
             "status": "healthy",
             "database": "connected",

@@ -1,0 +1,7 @@
+# PostgreSQL query for virtual alias maps
+hosts = localhost
+user = {{ db_user }}
+password = {{ db_password }}
+dbname = {{ db_name }}
+# No aliases for now, but structure ready for future implementation
+query = SELECT destination FROM aliases WHERE source='%s' AND active=1

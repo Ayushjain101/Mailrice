@@ -1,0 +1,6 @@
+# PostgreSQL query for virtual mailbox maps
+hosts = localhost
+user = {{ db_user }}
+password = {{ db_password }}
+dbname = {{ db_name }}
+query = SELECT m.local_part || '@' || d.domain FROM mailboxes m JOIN domains d ON m.domain_id = d.id WHERE m.local_part='%u' AND d.domain='%d' AND m.status='active'

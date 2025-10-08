@@ -1,0 +1,6 @@
+# PostgreSQL query for virtual mailbox domains
+hosts = localhost
+user = {{ db_user }}
+password = {{ db_password }}
+dbname = {{ db_name }}
+query = SELECT domain FROM domains WHERE domain='%s' AND status='active'

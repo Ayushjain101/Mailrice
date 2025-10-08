@@ -343,6 +343,45 @@
         state: reloaded
       when: nginx_test.rc == 0
 
+    # ==================== Mail Stack ====================
+
+    - name: Deploy Postfix
+      import_role:
+        name: postfix
+
+    - name: Deploy Dovecot
+      import_role:
+        name: dovecot
+
+    - name: Deploy OpenDKIM
+      import_role:
+        name: opendkim
+
+    - name: Create vmail user
+      user:
+        name: vmail
+        uid: 5000
+        system: yes
+        create_home: yes
+        home: /var/vmail
+        shell: /usr/sbin/nologin
+
+    - name: Create vmail directory
+      file:
+        path: /var/vmail
+        state: directory
+        owner: vmail
+        group: vmail
+        mode: '0770'
+
+    - name: Create OpenDKIM keys directory
+      file:
+        path: /etc/opendkim/keys
+        state: directory
+        owner: opendkim
+        group: opendkim
+        mode: '0750'
+
     # ==================== Firewall ====================
 
     - name: Configure UFW - Allow SSH
@@ -361,6 +400,36 @@
       ufw:
         rule: allow
         port: '443'
+        proto: tcp
+
+    - name: Configure UFW - Allow SMTP
+      ufw:
+        rule: allow
+        port: '25'
+        proto: tcp
+
+    - name: Configure UFW - Allow Submission
+      ufw:
+        rule: allow
+        port: '587'
+        proto: tcp
+
+    - name: Configure UFW - Allow SMTPS
+      ufw:
+        rule: allow
+        port: '465'
+        proto: tcp
+
+    - name: Configure UFW - Allow IMAP
+      ufw:
+        rule: allow
+        port: '143'
+        proto: tcp
+
+    - name: Configure UFW - Allow IMAPS
+      ufw:
+        rule: allow
+        port: '993'
         proto: tcp
 
     - name: Enable UFW
@@ -480,7 +549,13 @@
           ========================================
           1. Test API: curl https://{{ hostname }}/api/health
           2. Login and get JWT token
-          3. Create your first API key
-          4. Deploy mail stack (coming in Session 2!)
+          3. Create your first domain via POST /api/domains
+          4. Create your first mailbox via POST /api/mailboxes
+          5. Test email flow!
+
+          Mail Services:
+          - Postfix (SMTP): ports 25, 587, 465
+          - Dovecot (IMAP): ports 143, 993
+          - OpenDKIM: Signing enabled
 
           ========================================
