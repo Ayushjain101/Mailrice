@@ -361,15 +361,15 @@ async function generateDKIMKeys(domain, selector = 'mail') {
       '-v'
     ]);
 
-    // Change ownership to opendkim:opendkim so mailapi (in opendkim group) can read
-    await spawnAsync('sudo', ['chown', '-R', 'opendkim:opendkim', dkimDir]);
+    // Change ownership to opendkim:opendkim for proper OpenDKIM access
+    await spawnAsync('chown', ['-R', 'opendkim:opendkim', dkimDir]);
 
-    // Set permissions so group can read (640 for files, 750 for directory)
-    await spawnAsync('sudo', ['chmod', '750', dkimDir]);
-    await spawnAsync('sudo', ['chmod', '640', privateKeyPath]);
-    await spawnAsync('sudo', ['chmod', '640', txtPath]);
+    // Set permissions (640 for files, 750 for directory)
+    await spawnAsync('chmod', ['750', dkimDir]);
+    await spawnAsync('chmod', ['640', privateKeyPath]);
+    await spawnAsync('chmod', ['640', txtPath]);
 
-    // Read keys using Node.js fs (mailapi user is in opendkim group)
+    // Read keys using Node.js fs (API runs as root)
     const privateKey = await fs.readFile(privateKeyPath, 'utf8');
     const publicKeyRaw = await fs.readFile(txtPath, 'utf8');
 

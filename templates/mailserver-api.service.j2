@@ -6,8 +6,8 @@ Requires=mysql.service
 
 [Service]
 Type=simple
-User=mailapi
-Group=mailapi
+User=root
+Group=root
 WorkingDirectory=/opt/mailserver-api
 # Wait for MySQL to be ready before starting
 ExecStartPre=/bin/sleep 3
@@ -16,14 +16,6 @@ ExecStart=/usr/bin/node /opt/mailserver-api/server.js
 Restart=always
 RestartSec=10
 Environment=NODE_ENV=production
-
-# Security hardening (relaxed for sudo access)
-NoNewPrivileges=false
-PrivateTmp=false
-ProtectSystem=no
-ProtectHome=true
-ReadWritePaths=/var/vmail /etc/opendkim
-ReadOnlyPaths=/etc/postfix /etc/dovecot
 
 [Install]
 WantedBy=multi-user.target

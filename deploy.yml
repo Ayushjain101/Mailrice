@@ -570,6 +570,12 @@
       args:
         executable: /bin/bash
 
+    - name: Ensure Postfix configuration directory exists
+      file:
+        path: /etc/postfix
+        state: directory
+        mode: '0755'
+
     - name: Configure Postfix main.cf
       template:
         src: templates/postfix-main.cf.j2
@@ -603,6 +609,15 @@
         - { src: 'templates/mysql-virtual-mailbox-maps.cf.j2', dest: '/etc/postfix/mysql-virtual-mailbox-maps.cf' }
         - { src: 'templates/mysql-virtual-alias-maps.cf.j2', dest: '/etc/postfix/mysql-virtual-alias-maps.cf' }
       notify: restart postfix
+
+    - name: Ensure Dovecot configuration directories exist
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - /etc/dovecot
+        - /etc/dovecot/conf.d
 
     - name: Configure Dovecot SQL
       template:
@@ -662,35 +677,6 @@
           }
       notify: restart dovecot
 
-    - name: Create mailapi system user
-      user:
-        name: mailapi
-        system: yes
-        create_home: no
-        shell: /usr/sbin/nologin
-        groups:
-          - vmail
-          - opendkim
-        append: yes
-
-    - name: Configure sudoers for mailapi
-      copy:
-        dest: /etc/sudoers.d/mailserver-api
-        mode: '0440'
-        content: |
-          mailapi ALL=(ALL) NOPASSWD: /usr/sbin/opendkim-genkey
-          mailapi ALL=(ALL) NOPASSWD: /usr/bin/opendkim-genkey
-          mailapi ALL=(ALL) NOPASSWD: /bin/chown * /etc/opendkim/keys/*
-          mailapi ALL=(ALL) NOPASSWD: /bin/chmod * /etc/opendkim/keys/*
-          mailapi ALL=(ALL) NOPASSWD: /bin/chown * /var/vmail/*
-          mailapi ALL=(ALL) NOPASSWD: /bin/systemctl reload opendkim
-          mailapi ALL=(ALL) NOPASSWD: /bin/systemctl restart opendkim
-          mailapi ALL=(ALL) NOPASSWD: /usr/bin/postqueue -p
-          mailapi ALL=(ALL) NOPASSWD: /usr/bin/postqueue -f
-          mailapi ALL=(ALL) NOPASSWD: /usr/bin/systemctl is-active *
-          mailapi ALL=(ALL) NOPASSWD: /usr/bin/df *
-          mailapi ALL=(ALL) NOPASSWD: /usr/bin/uptime
-        validate: 'visudo -cf %s'
 
     - name: Create API directory
       file:
@@ -723,8 +709,8 @@
     - name: Set API directory ownership
       file:
         path: /opt/mailserver-api
-        owner: mailapi
-        group: mailapi
+        owner: root
+        group: root
         recurse: yes
 
     - name: Ensure OpenDKIM directory exists
@@ -756,17 +742,7 @@
         - /etc/opendkim/KeyTable
         - /etc/opendkim/SigningTable
 
-    - name: Ensure OpenDKIM config files are writable by mailapi
-      file:
-        path: "{{ item }}"
-        owner: opendkim
-        group: opendkim
-        mode: '0664'
-      loop:
-        - /etc/opendkim/KeyTable
-        - /etc/opendkim/SigningTable
-
-    - name: Set OpenDKIM directory permissions for group write access
+    - name: Set OpenDKIM directory permissions for root write access
       file:
         path: /etc/opendkim
         state: directory
