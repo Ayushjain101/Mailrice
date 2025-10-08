@@ -6,6 +6,7 @@ import { AppLayout } from './components/layout/AppLayout';
 import { Login } from './pages/Login';
 import { Dashboard } from './pages/Dashboard';
 import { Domains } from './pages/Domains';
+import { Mailboxes } from './pages/Mailboxes';
 import { ROUTES } from './utils/constants';
 
 // Create React Query client
@@ -20,10 +21,6 @@ const queryClient = new QueryClient({
 });
 
 // Placeholder pages
-function MailboxesPage() {
-  return <div className="p-6"><h1 className="text-2xl font-bold">Mailboxes</h1><p className="text-gray-600 mt-2">Mailbox management coming soon...</p></div>;
-}
-
 function APIKeysPage() {
   return <div className="p-6"><h1 className="text-2xl font-bold">API Keys</h1><p className="text-gray-600 mt-2">API key management coming soon...</p></div>;
 }
@@ -45,7 +42,7 @@ function App() {
             <Route element={<AppLayout />}>
               <Route path={ROUTES.DASHBOARD} element={<Dashboard />} />
               <Route path={ROUTES.DOMAINS} element={<Domains />} />
-              <Route path={ROUTES.MAILBOXES} element={<MailboxesPage />} />
+              <Route path={ROUTES.MAILBOXES} element={<Mailboxes />} />
               <Route path={ROUTES.API_KEYS} element={<APIKeysPage />} />
               <Route path={ROUTES.SETTINGS} element={<SettingsPage />} />
             </Route>
