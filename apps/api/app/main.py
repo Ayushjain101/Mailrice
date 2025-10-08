@@ -283,7 +283,7 @@ def create_api_key(
         "id": api_key.id,
         "name": api_key.name,
         "api_key": full_key,  # ONLY TIME THIS IS SHOWN!
-        "prefix": prefix,
+        "key_prefix": prefix,
         "scopes": api_key.scopes,
         "created_at": api_key.created_at.isoformat()
     }
@@ -299,19 +299,17 @@ def list_api_keys(
         models.APIKey.tenant_id == current_user.tenant_id
     ).all()
 
-    return {
-        "api_keys": [
-            {
-                "id": k.id,
-                "name": k.name,
-                "prefix": k.prefix,
-                "scopes": k.scopes,
-                "created_at": k.created_at.isoformat(),
-                "last_used_at": k.last_used_at.isoformat() if k.last_used_at else None
-            }
-            for k in keys
-        ]
-    }
+    return [
+        {
+            "id": k.id,
+            "name": k.name,
+            "key_prefix": k.prefix,
+            "scopes": k.scopes,
+            "created_at": k.created_at.isoformat(),
+            "last_used_at": k.last_used_at.isoformat() if k.last_used_at else None
+        }
+        for k in keys
+    ]
 
 
 @app.delete("/api/apikeys/{key_id}")

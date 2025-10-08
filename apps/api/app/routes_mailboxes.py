@@ -127,14 +127,16 @@ async def list_mailboxes(
 
         result.append({
             "id": mailbox.id,
+            "workspace_id": mailbox.workspace_id,
+            "domain_id": mailbox.domain_id,
+            "local_part": mailbox.local_part,
             "email": full_email,
-            "domain": domain.domain,
             "quota_mb": mailbox.quota_mb,
-            "status": mailbox.status,
+            "enabled": mailbox.status == "active",
             "created_at": mailbox.created_at.isoformat()
         })
 
-    return {"mailboxes": result}
+    return result
 
 
 @router.get("/{mailbox_id}")

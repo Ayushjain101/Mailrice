@@ -114,19 +114,18 @@ async def list_domains(
 
     domains = query.all()
 
-    return {
-        "domains": [
-            {
-                "id": d.id,
-                "domain": d.domain,
-                "hostname": d.hostname,
-                "dkim_selector": d.dkim_selector,
-                "status": d.status,
-                "created_at": d.created_at.isoformat()
-            }
-            for d in domains
-        ]
-    }
+    return [
+        {
+            "id": d.id,
+            "workspace_id": d.workspace_id,
+            "domain": d.domain,
+            "hostname": d.hostname,
+            "dkim_selector": d.dkim_selector,
+            "dkim_public_key": d.dkim_public_key,
+            "created_at": d.created_at.isoformat()
+        }
+        for d in domains
+    ]
 
 
 @router.get("/{domain_id}")
@@ -179,7 +178,7 @@ async def get_domain_dns_records(
 
     return {
         "domain": domain_model.domain,
-        "dns_records": dns_records
+        "records": dns_records
     }
 
 
