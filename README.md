@@ -1,658 +1,480 @@
-# Mail Server Deployment Package
+# Mailrice v2
 
-Complete mail server solution with Postfix, Dovecot, MySQL, and REST API for automation.
+**Production-ready email platform with multi-tenancy, automated provisioning, and enterprise-grade reliability.**
 
-## 🚀 One-Line Installation (Recommended)
-
-Deploy a complete mail server with a single command - **no manual setup required!**
-
-### Basic Installation
-```bash
-curl -fsSL https://raw.githubusercontent.com/Ayushjain101/mailserver-deployment/main/deploy.sh | bash -s -- \
-  SERVER_IP SSH_USER SSH_PASSWORD DOMAIN HOSTNAME
-```
-
-### With Auto DNS + Email Notification - Ultimate Zero Configuration!
-```bash
-curl -fsSL https://raw.githubusercontent.com/Ayushjain101/mailserver-deployment/main/deploy.sh | bash -s -- \
-  SERVER_IP SSH_USER SSH_PASSWORD DOMAIN HOSTNAME DB_PASSWORD CF_EMAIL CF_API_KEY CF_ZONE_ID EMAIL_RECIPIENT
-```
-
-**Example:**
-```bash
-curl -fsSL https://raw.githubusercontent.com/Ayushjain101/mailserver-deployment/main/deploy.sh | bash -s -- \
-  144.217.165.40 ubuntu MyPassword example.com mail.example.com '' \
-  you@email.com your_cf_api_key your_zone_id you@email.com
-```
-
-**What it does:**
-- ✅ Auto-detects your OS (macOS/Linux/WSL)
-- ✅ Auto-installs all dependencies (Git, Ansible, sshpass)
-- ✅ Deploys complete mail server in 7-10 minutes
-- ✅ **Auto-configures DNS via Cloudflare** (when credentials provided)
-- ✅ Generates API key and adds domain automatically
-- ✅ **Emails complete documentation with all credentials** (when email provided)
-- ✅ Works on any provider (AWS, DigitalOcean, OVH, etc.)
-
-📖 **[Full One-Line Install Guide](ONE_LINE_INSTALL.md)**
+Complete email infrastructure with FastAPI backend, Postfix/Dovecot/OpenDKIM mail stack, and one-command deployment via Ansible.
 
 ---
 
-## Features
+## 🚀 Quick Start
 
-- **Postfix** - SMTP server for sending/receiving emails
-- **Dovecot** - IMAP/POP3 server for mailbox access
-- **MySQL** - Virtual domains and users database
-- **REST API** - Node.js API for domain/mailbox automation
-- **DKIM Support** - Email authentication (OpenDKIM)
-- **Multi-domain** - Support for multiple domains on one server
-- **IP Rotation Ready** - Native installation supports GRE tunnels
+### One-Command Installation
 
-## 🚀 V2 Improvements (Phase 1 - Reliability)
-
-**Current version includes enterprise-grade reliability features:**
-
-### ✅ Pre-flight Validation
-- Validates system requirements before deployment starts
-- Checks memory (min 2GB, recommended 4GB)
-- Verifies disk space (min 10GB free)
-- Validates hostname and domain format
-- Checks port availability and resolves conflicts
-- **Result:** Deployment failures reduced from ~30% to ~5%
-
-### ✅ Task-level Retry Logic
-- Automatically retries failed operations (3 attempts with smart delays)
-- Handles transient network/repository failures
-- Retries package installations, SSL certificates, and API health checks
-- **Result:** Manual redeployments reduced by 85%
-
-### ✅ Centralized Logging
-- Timestamped logs for every deployment: `/var/log/mailrice/deployment_YYYYMMDD_HHMMSS.log`
-- Service-specific logs for troubleshooting:
-  - `/var/log/mailrice/postfix.log` - Mail server logs
-  - `/var/log/mailrice/dovecot.log` - IMAP/POP3 logs
-  - `/var/log/mailrice/opendkim.log` - DKIM signing logs
-  - `/var/log/mailrice/api.log` - API logs
-- Detailed deployment summaries with success/failure status
-- **Result:** Time-to-diagnose reduced from ~30min to ~3min
-
-### ✅ Rollback Mechanism
-- Automatic configuration backup before re-deployment
-- One-command rollback on deployment failure
-- Keeps last 5 backups automatically
-- Zero data loss guaranteed
-- **Result:** Safe re-deployments with automatic disaster recovery
-
-**📊 Impact Metrics:**
-- Deployment success rate: **70% → 99%**
-- Manual intervention: **40% → 5%**
-- Troubleshooting time: **-90%**
-- Average deployment time: **8 minutes** (unchanged)
-
-📖 **[Complete V2 Documentation](CODEBASE_DOCUMENTATION.md)** | **[Implementation Details](V2_PROGRESS_SUMMARY.md)**
-
-## Quick Start
-
-### Option 1: Ansible Deployment (Recommended)
-
-**Prerequisites:**
-- Ubuntu 20.04/22.04 server
-- Ansible installed on your local machine
-- Root/sudo access to target server
-
-**Steps:**
-
-1. Clone this deployment package to your local machine
-
-2. Create inventory file:
-```bash
-cat > inventory << EOF
-[mailserver]
-your-server-ip ansible_user=root
-EOF
-```
-
-3. Run the playbook:
-```bash
-ansible-playbook -i inventory deploy.yml \
-  --extra-vars "domain=yourdomain.com hostname=mail.yourdomain.com db_password=YourSecurePassword"
-```
-
-**Variables:**
-- `domain` - Your primary domain (required)
-- `hostname` - Mail server hostname (required)
-- `db_password` - MySQL database password (optional, auto-generated if not provided)
-- `api_port` - API port (default: 3000)
-- `vmail_uid` - Virtual mail user UID (default: 5000)
-- `vmail_gid` - Virtual mail user GID (default: 5000)
-
-### Option 2: Shell Script Installation
-
-**Steps:**
-
-1. Copy the entire deployment package to your server:
-```bash
-scp -r mailserver-deployment/ root@your-server:/tmp/
-```
-
-2. SSH to your server:
-```bash
-ssh root@your-server
-```
-
-3. Run the installation script:
-```bash
-cd /tmp/mailserver-deployment/scripts
-sudo ./install.sh yourdomain.com mail.yourdomain.com YourDBPassword
-```
-
-Or run interactively:
-```bash
-sudo ./install.sh
-```
-
-The script will prompt for:
-- Domain name
-- Hostname
-- Database password
-
-## Post-Installation
-
-### 1. Generate API Key
-
-The default API key is `default_key_change_me`. Generate a secure one:
+Deploy complete email platform in ~10 minutes:
 
 ```bash
-curl -X POST http://mail.yourdomain.com/api/api-keys \
-  -H "x-api-key: default_key_change_me" \
-  -H "Content-Type: application/json" \
-  -d '{"description":"Production Key"}'
+./install.sh your-domain.com mail.your-domain.com
 ```
 
-Save the returned API key securely.
+**What it does:**
+- ✅ Validates system requirements (Ubuntu 22.04/24.04, 2GB+ RAM)
+- ✅ Installs PostgreSQL, Redis, Nginx, Postfix, Dovecot, OpenDKIM
+- ✅ Obtains SSL certificates via Cloudflare DNS-01
+- ✅ Deploys FastAPI backend with JWT authentication
+- ✅ Configures firewall (UFW) and security hardening
+- ✅ Generates admin credentials and saves to `/root/.mailrice-credentials.txt`
 
-### 2. Add Your Domain
+### Prerequisites
 
-```bash
-curl -X POST http://mail.yourdomain.com/api/domains \
-  -H "x-api-key: YOUR_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"domain":"yourdomain.com"}'
+- Ubuntu 22.04 or 24.04 server
+- 2GB+ RAM (4GB recommended)
+- Root/sudo access
+- Domain with Cloudflare DNS (optional, for automated SSL/DNS)
+
+---
+
+## 📚 Documentation
+
+- **[V2 Complete Guide](V2_README.md)** - Architecture, features, deployment
+- **[Testing Guide](TESTING.md)** - Comprehensive testing (10 sections, 20+ tests)
+- **[Session 1 Summary](SESSION1_COMPLETE.md)** - Core infrastructure details
+
+---
+
+## ✨ Features
+
+### Multi-Tenant Architecture
+- **Tenants** → **Workspaces** → **Domains** → **Mailboxes**
+- Complete tenant isolation with database-level security
+- Support for unlimited tenants, domains, and mailboxes
+
+### Email Infrastructure
+- **Postfix** - SMTP/Submission/SMTPS (ports 25, 587, 465)
+- **Dovecot** - IMAP/LMTP with Argon2id authentication (ports 143, 993)
+- **OpenDKIM** - 2048-bit RSA DKIM signing for all outbound mail
+- **Maildir Storage** - Standard maildir format at `/var/vmail/`
+
+### API-First Design
+- **FastAPI** backend with async/await
+- **JWT Authentication** - Secure token-based auth for dashboard
+- **API Keys** - Programmatic access with prefix-based lookup
+- **RESTful Endpoints** - Complete domain/mailbox management
+
+### Automation
+- **Cloudflare Integration** - Automatic DNS record creation (MX, SPF, DKIM, DMARC)
+- **DKIM Key Generation** - Automatic 2048-bit RSA key generation per domain
+- **Maildir Provisioning** - Automatic creation with proper permissions
+- **Event Logging** - Audit trail for all operations
+
+### Security
+- **Argon2id** password hashing for mailboxes
+- **Bcrypt** for API keys
+- **TLS 1.2+** enforcement on all mail protocols
+- **Systemd Sandboxing** - ProtectSystem, PrivateTmp, NoNewPrivileges
+- **UFW Firewall** - Minimal attack surface
+- **No Plaintext Auth** - TLS required before authentication
+
+### Deployment
+- **Ansible-Powered** - Idempotent, reproducible deployments
+- **Pre-flight Checks** - System validation before deployment
+- **Zero-Configuration** - Sensible defaults, minimal required vars
+- **SSL Automation** - Let's Encrypt via Cloudflare DNS-01
+
+---
+
+## 🏗️ Architecture
+
+```
+                    ┌──────────────────────────────────┐
+                    │         FastAPI Backend          │
+                    │  (JWT Auth + API Keys + Routes)  │
+                    └──────────────┬───────────────────┘
+                                   │
+                    ┌──────────────┴───────────────────┐
+                    │                                  │
+        ┌───────────▼──────────┐         ┌───────────▼──────────┐
+        │  Domain Service      │         │  Mailbox Service     │
+        │  - DKIM Generation   │         │  - Maildir Creation  │
+        │  - DNS Automation    │         │  - Password Hash     │
+        │  - DB Entry          │         │  - Permissions       │
+        └───────────┬──────────┘         └───────────┬──────────┘
+                    │                                │
+        ┌───────────▼──────────┐         ┌──────────▼───────────┐
+        │  Cloudflare API      │         │   PostgreSQL DB      │
+        │  (MX, SPF, DKIM,     │         │  (Multi-tenant)      │
+        │   DMARC records)     │         │                      │
+        └──────────────────────┘         └──────────────────────┘
+                                                    │
+                    ┌───────────────────────────────┘
+                    │
+        ┌───────────▼──────────┐
+        │    Mail Stack        │
+        │  - Postfix (SMTP)    │
+        │  - Dovecot (IMAP)    │
+        │  - OpenDKIM (Sign)   │
+        └──────────────────────┘
 ```
 
-This will return DKIM DNS record information.
+---
 
-### 3. Configure DNS Records
-
-Add these DNS records in your DNS provider (Cloudflare, Route53, etc.):
-
-**A Record:**
-```
-mail.yourdomain.com → YOUR_SERVER_IP
-```
-
-**MX Record:**
-```
-yourdomain.com → mail.yourdomain.com (Priority: 10)
-```
-
-**SPF Record (TXT):**
-```
-yourdomain.com → v=spf1 ip4:YOUR_SERVER_IP a:mail.yourdomain.com ~all
-```
-
-**DKIM Record (TXT):**
-```
-mail._domainkey.yourdomain.com → v=DKIM1; k=rsa; p=YOUR_PUBLIC_KEY
-```
-*(Get the public key from the domain creation response)*
-
-**DMARC Record (TXT):**
-```
-_dmarc.yourdomain.com → v=DMARC1; p=quarantine; rua=mailto:postmaster@yourdomain.com
-```
-
-### 4. Create Mailboxes
-
-```bash
-curl -X POST http://mail.yourdomain.com/api/mailboxes \
-  -H "x-api-key: YOUR_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"email":"user@yourdomain.com","password":"SecurePassword123","quota_mb":1000}'
-```
-
-## API Documentation
+## 📖 API Usage
 
 ### Authentication
 
-All API requests require the `x-api-key` header:
+All requests require either JWT token (for dashboard) or API key (for automation):
+
+```bash
+# Login to get JWT token
+curl -X POST https://mail.your-domain.com/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@your-domain.com","password":"your-password"}'
+
+# Use JWT for subsequent requests
+curl https://mail.your-domain.com/api/domains \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+
+# Or use API key
+curl https://mail.your-domain.com/api/domains \
+  -H "X-API-Key: YOUR_API_KEY"
 ```
-x-api-key: YOUR_API_KEY
+
+### Domain Management
+
+```bash
+# Create domain with automated provisioning
+curl -X POST https://mail.your-domain.com/api/domains \
+  -H "Authorization: Bearer $JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "workspace_id": 1,
+    "domain": "testmail.com",
+    "hostname": "mail.your-domain.com",
+    "dkim_selector": "mail"
+  }'
+
+# Get DNS records for manual setup
+curl https://mail.your-domain.com/api/domains/1/dns-records \
+  -H "Authorization: Bearer $JWT_TOKEN"
+
+# Rotate DKIM key
+curl -X POST https://mail.your-domain.com/api/domains/1/rotate-dkim \
+  -H "Authorization: Bearer $JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"new_selector":"mail2025"}'
 ```
 
-### Rate Limiting
+### Mailbox Management
 
-The API includes built-in rate limiting to prevent abuse and ensure fair usage:
+```bash
+# Create mailbox
+curl -X POST https://mail.your-domain.com/api/mailboxes \
+  -H "Authorization: Bearer $JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "workspace_id": 1,
+    "domain_id": 1,
+    "local_part": "john",
+    "password": "SecurePassword123!",
+    "quota_mb": 1024
+  }'
 
-**Three-tier rate limiting system:**
+# Update password
+curl -X PUT https://mail.your-domain.com/api/mailboxes/1/password \
+  -H "Authorization: Bearer $JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"new_password":"NewSecure456!"}'
 
-1. **Authentication Rate Limit** (Brute Force Protection)
-   - **Default:** 5 failed attempts per 15 minutes
-   - Only counts failed authentication attempts
-   - Configurable via `RATE_LIMIT_AUTH_MAX` and `RATE_LIMIT_AUTH_WINDOW_MS`
+# List mailboxes (filter by workspace or domain)
+curl https://mail.your-domain.com/api/mailboxes?workspace_id=1 \
+  -H "Authorization: Bearer $JWT_TOKEN"
+```
 
-2. **General API Rate Limit**
-   - **Default:** 100 requests per minute
-   - Applies to all endpoints after successful authentication
-   - Configurable via `RATE_LIMIT_MAX_REQUESTS` and `RATE_LIMIT_WINDOW_MS`
+### API Key Management
 
-3. **Strict Rate Limit** (Resource-Intensive Operations)
-   - **Default:** 10 creation requests per minute
-   - Applies to: `POST /domains` and `POST /mailboxes`
-   - Prevents server overload during bulk operations
-   - Configurable via `RATE_LIMIT_STRICT_MAX` and `RATE_LIMIT_STRICT_WINDOW_MS`
+```bash
+# Create API key for programmatic access
+curl -X POST https://mail.your-domain.com/api/apikeys \
+  -H "Authorization: Bearer $JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Production Key","scopes":[]}'
 
-**Rate limit by:** API key (if provided) or IP address
+# ⚠️ Save the returned `api_key` - it's only shown once!
+```
 
-**Response Headers:**
-- `RateLimit-Limit` - Maximum requests allowed
-- `RateLimit-Remaining` - Requests remaining in current window
-- `RateLimit-Reset` - Time when rate limit resets
+---
 
-**Rate limit exceeded response:**
+## 🔧 Post-Deployment
+
+### 1. Get Admin Credentials
+
+```bash
+ssh root@your-server
+cat /root/.mailrice-credentials.txt
+```
+
+### 2. Test Health
+
+```bash
+curl https://mail.your-domain.com/api/health
+```
+
+Expected response:
 ```json
 {
-  "error": "Too many requests, please try again later."
-}
-```
-HTTP Status: `429 Too Many Requests`
-
-**Configuration:**
-Edit rate limits in your `.env` file:
-```bash
-# General API rate limiting
-RATE_LIMIT_WINDOW_MS=60000        # 1 minute window
-RATE_LIMIT_MAX_REQUESTS=100       # 100 requests per window
-
-# Strict rate limiting (mailbox/domain creation)
-RATE_LIMIT_STRICT_WINDOW_MS=60000 # 1 minute window
-RATE_LIMIT_STRICT_MAX=10          # 10 creates per window
-
-# Auth rate limiting (brute force protection)
-RATE_LIMIT_AUTH_WINDOW_MS=900000  # 15 minute window
-RATE_LIMIT_AUTH_MAX=5             # 5 failed attempts
-```
-
-**For Cold Email Agencies:**
-- Adjust `RATE_LIMIT_STRICT_MAX` higher if bulk creating mailboxes
-- Recommended: 20-50 for high-volume operations
-- Monitor API responses for rate limit headers
-
-### Endpoints
-
-#### Health Check
-```bash
-GET /health
-```
-
-#### Domain Management
-
-**List all domains:**
-```bash
-GET /domains
-```
-
-**Get specific domain:**
-```bash
-GET /domains/:domain
-```
-
-**Add domain:**
-```bash
-POST /domains
-Content-Type: application/json
-
-{
-  "domain": "example.com",
-  "dkim_selector": "mail"  # optional, defaults to "mail"
+  "status": "healthy",
+  "database": "connected",
+  "version": "2.0.0"
 }
 ```
 
-**Delete domain:**
+### 3. Create First Domain
+
 ```bash
-DELETE /domains/:domain
+# Login to get JWT token
+JWT=$(curl -X POST https://mail.your-domain.com/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@your-domain.com","password":"your-password"}' \
+  | jq -r '.access_token')
+
+# Create domain
+curl -X POST https://mail.your-domain.com/api/domains \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "workspace_id": 1,
+    "domain": "testmail.com",
+    "hostname": "mail.your-domain.com"
+  }'
 ```
 
-**Get DKIM record:**
+### 4. Create First Mailbox
+
 ```bash
-GET /domains/:domain/dkim
+curl -X POST https://mail.your-domain.com/api/mailboxes \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "workspace_id": 1,
+    "domain_id": 1,
+    "local_part": "hello",
+    "password": "SecurePassword123!",
+    "quota_mb": 1024
+  }'
 ```
 
-#### Mailbox Management
+### 5. Test Email Flow
 
-**List all mailboxes:**
+See [TESTING.md](TESTING.md) for comprehensive testing guide.
+
+---
+
+## 🛠️ Service Management
+
+### Check Status
+
 ```bash
-GET /mailboxes
-```
-
-**Get specific mailbox:**
-```bash
-GET /mailboxes/:email
-```
-
-**Create mailbox:**
-```bash
-POST /mailboxes
-Content-Type: application/json
-
-{
-  "email": "user@example.com",
-  "password": "SecurePassword123",
-  "quota_mb": 1000  # optional, defaults to 1000
-}
-```
-
-**Update password:**
-```bash
-PUT /mailboxes/:email/password
-Content-Type: application/json
-
-{
-  "password": "NewSecurePassword"
-}
-```
-
-**Delete mailbox:**
-```bash
-DELETE /mailboxes/:email
-```
-
-#### API Key Management
-
-**Generate new API key:**
-```bash
-POST /api-keys
-Content-Type: application/json
-
-{
-  "description": "Production API Key"
-}
-```
-
-## Email Client Configuration
-
-### SMTP (Sending)
-- **Server:** mail.yourdomain.com or YOUR_SERVER_IP
-- **Port:** 587 (STARTTLS) or 465 (SSL) or 25
-- **Username:** user@yourdomain.com
-- **Password:** Your mailbox password
-- **Authentication:** Required
-- **Encryption:** STARTTLS (port 587) or SSL/TLS (port 465)
-
-### IMAP (Receiving)
-- **Server:** mail.yourdomain.com or YOUR_SERVER_IP
-- **Port:** 143 (STARTTLS) or 993 (SSL)
-- **Username:** user@yourdomain.com
-- **Password:** Your mailbox password
-- **Encryption:** STARTTLS or SSL/TLS
-
-### POP3 (Alternative)
-- **Server:** mail.yourdomain.com or YOUR_SERVER_IP
-- **Port:** 110 (STARTTLS) or 995 (SSL)
-- **Username:** user@yourdomain.com
-- **Password:** Your mailbox password
-
-## Service Management
-
-### Check Service Status
-```bash
+sudo systemctl status mailrice-api
 sudo systemctl status postfix
 sudo systemctl status dovecot
-sudo systemctl status mailserver-api
-```
-
-### Restart Services
-```bash
-sudo systemctl restart postfix
-sudo systemctl restart dovecot
-sudo systemctl restart mailserver-api
+sudo systemctl status opendkim
+sudo systemctl status nginx
 ```
 
 ### View Logs
-```bash
-# V2 Centralized Logs (Recommended)
-sudo tail -f /var/log/mailrice/postfix.log     # Mail server logs
-sudo tail -f /var/log/mailrice/dovecot.log     # IMAP/POP3 logs
-sudo tail -f /var/log/mailrice/opendkim.log    # DKIM signing logs
-sudo tail -f /var/log/mailrice/api.log         # API logs
-sudo tail -f /var/log/mailrice/deployment.log  # Deployment history
 
-# Alternative: System logs
+```bash
+# API logs
+sudo journalctl -u mailrice-api -f
+
+# Mail logs
 sudo tail -f /var/log/mail.log
-sudo journalctl -u postfix -f
-sudo journalctl -u dovecot -f
-sudo journalctl -u mailserver-api -f
+
+# Nginx logs
+sudo tail -f /var/log/nginx/error.log
 ```
 
-## Database Access
+### Restart Services
 
 ```bash
-sudo mysql mailserver
-
-# View domains
-SELECT * FROM virtual_domains;
-
-# View mailboxes
-SELECT * FROM virtual_users;
-
-# View API keys
-SELECT * FROM api_keys;
+sudo systemctl restart mailrice-api
+sudo systemctl restart postfix
+sudo systemctl restart dovecot
 ```
 
-## Security Hardening
+---
 
-### 1. Install SSL/TLS Certificates
+## 📊 What's New in V2
 
-Using Let's Encrypt:
-```bash
-sudo apt-get install certbot
-sudo certbot certonly --standalone -d mail.yourdomain.com
+### vs V1 (MySQL/Node.js)
 
-# Update Postfix
-sudo postconf -e "smtpd_tls_cert_file=/etc/letsencrypt/live/mail.yourdomain.com/fullchain.pem"
-sudo postconf -e "smtpd_tls_key_file=/etc/letsencrypt/live/mail.yourdomain.com/privkey.pem"
+| Feature | V1 | V2 |
+|---------|----|----|
+| Backend | Node.js/Express | FastAPI (async/await) |
+| Database | MySQL | PostgreSQL |
+| Authentication | API keys only | JWT + API keys |
+| Multi-tenancy | ❌ | ✅ Complete isolation |
+| DNS Automation | ❌ | ✅ Cloudflare API |
+| DKIM Rotation | ❌ | ✅ API endpoint |
+| Password Hashing | MD5-CRYPT | Argon2id |
+| Deployment | Shell scripts | Ansible automation |
+| Testing Guide | ❌ | ✅ 20+ tests |
+| SSL | Manual | Automated (Certbot) |
+| Event Logging | ❌ | ✅ Audit trail |
 
-# Update Dovecot
-sudo sed -i 's|ssl_cert = .*|ssl_cert = </etc/letsencrypt/live/mail.yourdomain.com/fullchain.pem|' /etc/dovecot/conf.d/10-ssl.conf
-sudo sed -i 's|ssl_key = .*|ssl_key = </etc/letsencrypt/live/mail.yourdomain.com/privkey.pem|' /etc/dovecot/conf.d/10-ssl.conf
+### Reliability Improvements
 
-# Restart services
-sudo systemctl restart postfix dovecot
+- ✅ **Pre-flight validation** - System checks before deployment
+- ✅ **Idempotent deployment** - Safe to re-run Ansible playbook
+- ✅ **Health checks** - API health endpoint for monitoring
+- ✅ **Structured logging** - Better debugging and troubleshooting
+- ✅ **Error handling** - Graceful failures with rollback support
+
+---
+
+## 🎯 Use Cases
+
+### Cold Email Agencies
+- Multi-tenant: Separate workspace per client
+- Bulk mailbox creation via API
+- Automated DKIM configuration
+- IP rotation ready (GRE tunnels supported)
+
+### SaaS Email Platforms
+- White-label ready
+- API-first design for integrations
+- Complete tenant isolation
+- Scalable architecture
+
+### Self-Hosted Email
+- Full control over data
+- No third-party dependencies
+- Open source (customizable)
+- Cost-effective (no per-mailbox fees)
+
+---
+
+## 🔒 Security
+
+### Password Storage
+- **Mailboxes**: Argon2id (memory-hard, GPU-resistant)
+- **API Keys**: Bcrypt with 12 rounds
+- **JWT Tokens**: HS256 with configurable expiration
+
+### Network Security
+- **TLS Enforcement**: Required for IMAP/SMTP authentication
+- **Firewall**: UFW with minimal open ports
+- **Systemd Sandboxing**: ProtectSystem, PrivateTmp, NoNewPrivileges
+- **No Root**: Services run as unprivileged users (mailrice, vmail)
+
+### Database Security
+- **Tenant Isolation**: All queries filter by tenant_id
+- **Connection Pooling**: Async connection management
+- **Prepared Statements**: SQL injection protection
+
+---
+
+## 🧪 Testing
+
+Comprehensive testing guide with 10 sections:
+
+1. API Health Check
+2. Domain Provisioning
+3. Mailbox Provisioning
+4. Email Flow Testing
+5. DKIM Verification
+6. API Key Testing
+7. Advanced Testing (rotation, deletion)
+8. Security Testing (TLS, auth)
+9. Performance Testing (load tests)
+10. Troubleshooting
+
+See [TESTING.md](TESTING.md) for complete guide.
+
+---
+
+## 📂 File Structure
+
+```
+mailrice/
+├── install.sh                    # One-command installer
+├── ansible/
+│   ├── playbook.yml             # Main deployment playbook
+│   ├── group_vars/
+│   │   └── all.yml.example      # Configuration template
+│   └── roles/
+│       ├── postfix/             # SMTP server role
+│       ├── dovecot/             # IMAP server role
+│       └── opendkim/            # DKIM signing role
+├── apps/api/
+│   ├── alembic/                 # Database migrations
+│   │   └── versions/
+│   │       └── 001_initial_schema.py
+│   ├── app/
+│   │   ├── main.py              # FastAPI application
+│   │   ├── models.py            # SQLAlchemy models
+│   │   ├── auth.py              # JWT + API key auth
+│   │   ├── config.py            # Settings management
+│   │   ├── database.py          # DB connection
+│   │   ├── routes_domains.py   # Domain API endpoints
+│   │   ├── routes_mailboxes.py # Mailbox API endpoints
+│   │   ├── services/            # Business logic
+│   │   │   ├── domain.py        # Domain provisioning
+│   │   │   └── mailbox.py       # Mailbox provisioning
+│   │   └── utils/               # Utilities
+│   │       ├── cloudflare.py    # DNS automation
+│   │       ├── dkim.py          # DKIM key generation
+│   │       └── network.py       # IP detection
+│   └── requirements.txt         # Python dependencies
+├── V2_README.md                 # Complete v2 documentation
+├── TESTING.md                   # Testing guide
+└── SESSION1_COMPLETE.md         # Session 1 summary
 ```
 
-### 2. Configure Firewall
+---
 
-```bash
-sudo ufw allow 25/tcp    # SMTP
-sudo ufw allow 587/tcp   # Submission
-sudo ufw allow 465/tcp   # SMTPS
-sudo ufw allow 143/tcp   # IMAP
-sudo ufw allow 993/tcp   # IMAPS
-sudo ufw allow 110/tcp   # POP3
-sudo ufw allow 995/tcp   # POP3S
-sudo ufw allow 3000/tcp  # API (restrict to specific IPs in production)
-sudo ufw enable
-```
+## 🚧 Roadmap
 
-### 3. Install Fail2ban
+### Completed ✅
+- [x] Session 1: Core Infrastructure (FastAPI, PostgreSQL, JWT, Ansible)
+- [x] Session 2: Mail Stack (Postfix, Dovecot, OpenDKIM, DNS automation)
 
-```bash
-sudo apt-get install fail2ban
-sudo systemctl enable fail2ban
-sudo systemctl start fail2ban
-```
+### Planned 🎯
+- [ ] Session 3: Monitoring & Observability (Prometheus, Grafana)
+- [ ] Session 4: Backup Automation (PostgreSQL + maildir)
+- [ ] Session 5: Rate Limiting (Redis-based)
+- [ ] Session 6: Frontend Dashboard (React/Vue)
+- [ ] Session 7: Webhook Notifications
+- [ ] Session 8: IP Rotation (GRE tunnel automation)
 
-### 4. Set Reverse DNS (PTR Record)
+---
 
-Contact your hosting provider to set:
-```
-YOUR_SERVER_IP → mail.yourdomain.com
-```
+## 🤝 Contributing
 
-This improves email deliverability.
+This is a side project open for contributions. Areas for improvement:
 
-### 5. Restrict API Access
+- Frontend dashboard
+- Advanced monitoring
+- Additional DNS providers (Route53, DigitalOcean)
+- SMTP relay integration
+- Email analytics
 
-Limit API port to specific IPs:
-```bash
-sudo ufw delete allow 3000/tcp
-sudo ufw allow from YOUR_TRUSTED_IP to any port 3000
-```
+---
 
-## IP Rotation Setup
+## 📄 License
 
-Since this is a native installation (not Dockerized), you can add IP rotation using GRE tunnels.
+MIT License - Free to use for personal and commercial projects.
 
-### Add Additional IPs
+---
 
-**Option 1: Multiple IPs on Interface**
-```bash
-sudo ip addr add NEW_IP/32 dev eth0
-```
+## 💡 Support
 
-**Option 2: GRE Tunnel**
-```bash
-sudo ip tunnel add gre1 mode gre remote REMOTE_IP local YOUR_SERVER_IP
-sudo ip addr add NEW_IP/32 dev gre1
-sudo ip link set gre1 up
-```
+- **Documentation**: [V2_README.md](V2_README.md)
+- **Testing**: [TESTING.md](TESTING.md)
+- **Issues**: Check logs in `/var/log/mail.log` and `journalctl -u mailrice-api`
+- **Health Check**: `curl https://mail.your-domain.com/api/health`
 
-### Configure Postfix for IP Rotation
+---
 
-Edit `/etc/postfix/main.cf`:
-```
-# Default outbound IP
-smtp_bind_address = YOUR_DEFAULT_IP
+**Built with ❤️ using FastAPI, PostgreSQL, Ansible, Postfix, Dovecot, and OpenDKIM.**
 
-# Or use per-domain routing
-# Add to /etc/postfix/sender_dependent_default_transport_maps
-# domain1.com    smtp-ip1:
-# domain2.com    smtp-ip2:
-```
-
-## Troubleshooting
-
-### Mail Not Sending
-
-1. Check Postfix logs:
-```bash
-sudo tail -f /var/log/mail.log
-```
-
-2. Test SMTP:
-```bash
-telnet localhost 25
-```
-
-3. Verify DNS records are propagated:
-```bash
-dig MX yourdomain.com
-dig TXT mail._domainkey.yourdomain.com
-```
-
-### IMAP Authentication Failing
-
-1. Check Dovecot logs:
-```bash
-sudo journalctl -u dovecot -f
-```
-
-2. Test authentication:
-```bash
-doveadm auth test user@yourdomain.com password
-```
-
-3. Verify database connection:
-```bash
-sudo mysql mailserver -e "SELECT * FROM virtual_users WHERE email='user@yourdomain.com';"
-```
-
-### API Not Responding
-
-1. Check API logs:
-```bash
-sudo journalctl -u mailserver-api -f
-```
-
-2. Verify API is running:
-```bash
-curl http://mail.yourdomain.com/api/health -H "x-api-key: YOUR_API_KEY"
-```
-
-3. Check database connection:
-```bash
-cat /opt/mailserver-api/.env
-```
-
-## File Locations
-
-- **API Code:** `/opt/mailserver-api/`
-- **Postfix Config:** `/etc/postfix/main.cf`
-- **Dovecot Config:** `/etc/dovecot/`
-- **DKIM Keys:** `/etc/opendkim/keys/`
-- **Mail Storage:** `/var/vmail/`
-- **Database:** MySQL `mailserver` database
-
-## Backup Strategy
-
-### Backup Database
-```bash
-sudo mysqldump mailserver > mailserver-backup-$(date +%Y%m%d).sql
-```
-
-### Backup Mail
-```bash
-sudo tar -czf vmail-backup-$(date +%Y%m%d).tar.gz /var/vmail
-```
-
-### Backup Configuration
-```bash
-sudo tar -czf config-backup-$(date +%Y%m%d).tar.gz \
-  /etc/postfix \
-  /etc/dovecot \
-  /opt/mailserver-api
-```
-
-## Scaling to Multiple Servers
-
-### Deploy to New Server
-
-1. Copy this deployment package to new server
-2. Run installation with different domain:
-```bash
-ansible-playbook -i new-inventory deploy.yml \
-  --extra-vars "domain=newdomain.com hostname=mail.newdomain.com"
-```
-
-3. Configure DNS for new domain
-4. Generate API key for new server
-5. Add domains and mailboxes via API
-
-### Load Balancing
-
-For high availability, use:
-- **DNS Round Robin** - Multiple A records for MX
-- **HAProxy** - Load balance SMTP/IMAP
-- **Database Replication** - MySQL master-slave setup
-
-## Support
-
-For issues or questions:
-1. Check logs in `/var/log/mail.log`
-2. Review service status: `systemctl status postfix dovecot mailserver-api`
-3. Test connectivity: `telnet localhost 25` and `telnet localhost 143`
-4. Verify DNS records are correct
-
-## License
-
-This deployment package is provided as-is for mail server automation.
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
