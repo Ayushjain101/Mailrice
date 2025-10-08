@@ -3,13 +3,14 @@ Domain API Routes
 """
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from pydantic import BaseModel
+from pydantic import BaseModel, validator
 from typing import Optional
 from app import models
 from app.database import get_db
 from app.main import get_current_user_from_token
 from app.services import domain as domain_service
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,49 @@ class CreateDomainRequest(BaseModel):
     domain: str
     hostname: Optional[str] = None
     dkim_selector: str = "mail"
+
+    @validator('domain')
+    def validate_domain(cls, v):
+        """Validate domain name format (RFC-compliant)"""
+        if not v:
+            raise ValueError('Domain cannot be empty')
+
+        # RFC-compliant domain validation
+        domain_regex = r'^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$'
+        if not re.match(domain_regex, v):
+            raise ValueError('Invalid domain format. Must be a valid domain name (e.g., example.com)')
+
+        # Check length (RFC 1035)
+        if len(v) > 253:
+            raise ValueError('Domain name too long (max 253 characters)')
+
+        # Prevent localhost, IPs, and private domains
+        if v.lower() in ['localhost', 'localhost.localdomain']:
+            raise ValueError('Cannot use localhost as domain')
+
+        # Check for valid TLD (at least 2 chars)
+        parts = v.split('.')
+        if len(parts[-1]) < 2:
+            raise ValueError('Invalid top-level domain')
+
+        return v.lower()
+
+    @validator('dkim_selector')
+    def validate_dkim_selector(cls, v):
+        """Validate DKIM selector format"""
+        if not v:
+            raise ValueError('DKIM selector cannot be empty')
+
+        if not re.match(r'^[a-z0-9-]+$', v):
+            raise ValueError('DKIM selector can only contain lowercase letters, numbers, and hyphens')
+
+        if len(v) > 63:
+            raise ValueError('DKIM selector too long (max 63 characters)')
+
+        if v.startswith('-') or v.endswith('-'):
+            raise ValueError('DKIM selector cannot start or end with hyphen')
+
+        return v.lower()
 
 
 class DomainResponse(BaseModel):
@@ -114,19 +158,18 @@ async def list_domains(
 
     domains = query.all()
 
-    return {
-        "domains": [
-            {
-                "id": d.id,
-                "domain": d.domain,
-                "hostname": d.hostname,
-                "dkim_selector": d.dkim_selector,
-                "status": d.status,
-                "created_at": d.created_at.isoformat()
-            }
-            for d in domains
-        ]
-    }
+    return [
+        {
+            "id": d.id,
+            "workspace_id": d.workspace_id,
+            "domain": d.domain,
+            "hostname": d.hostname,
+            "dkim_selector": d.dkim_selector,
+            "dkim_public_key": d.dkim_public_key,
+            "created_at": d.created_at.isoformat()
+        }
+        for d in domains
+    ]
 
 
 @router.get("/{domain_id}")
@@ -179,7 +222,7 @@ async def get_domain_dns_records(
 
     return {
         "domain": domain_model.domain,
-        "dns_records": dns_records
+        "records": dns_records
     }
 
 
@@ -253,7 +296,16 @@ async def delete_domain(
             detail=f"Cannot delete domain with {mailbox_count} active mailboxes"
         )
 
-    db.delete(domain_model)
-    db.commit()
-
-    return {"message": "Domain deleted successfully"}
+    # Proper transaction management with rollback on failure
+    try:
+        db.delete(domain_model)
+        db.commit()
+        logger.info(f"Deleted domain {domain_model.domain} (id={domain_id})")
+        return {"message": "Domain deleted successfully"}
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Failed to delete domain {domain_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete domain: {str(e)}"
+        )

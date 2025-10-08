@@ -161,6 +161,13 @@ async def rotate_dkim_key(db: Session, domain_id: int, new_selector: str) -> mod
     if not domain_model:
         raise ValueError(f"Domain not found: {domain_id}")
 
+    # Validate new selector is different from current
+    if new_selector == domain_model.dkim_selector:
+        raise ValueError(
+            f"New selector '{new_selector}' must be different from current selector. "
+            f"Choose a different selector name for rotation."
+        )
+
     logger.info(f"Rotating DKIM key for {domain_model.domain} to selector {new_selector}")
 
     # Generate new key

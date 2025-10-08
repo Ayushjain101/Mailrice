@@ -21,9 +21,21 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://localhost:6379/0"
 
     # JWT
-    JWT_SECRET: str = secrets.token_urlsafe(32)
+    JWT_SECRET: str  # REQUIRED: Must be set in .env - generates random if not set
     JWT_ALGORITHM: str = "HS256"
     JWT_EXPIRATION_MINUTES: int = 60 * 24  # 24 hours
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        # Warn if JWT_SECRET is not set (only happens if .env is missing it)
+        if not self.JWT_SECRET:
+            import logging
+            logging.warning(
+                "JWT_SECRET not set in environment! Using random secret. "
+                "This will invalidate all tokens on restart. "
+                "Set JWT_SECRET in .env for production."
+            )
+            self.JWT_SECRET = secrets.token_urlsafe(32)
 
     # API Keys
     API_KEY_PREFIX: str = "mr_live_"

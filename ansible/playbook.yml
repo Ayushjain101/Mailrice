@@ -239,7 +239,7 @@
           Wants=postgresql.service redis.service
 
           [Service]
-          Type=notify
+          Type=simple
           User=mailrice
           Group=mailrice
           WorkingDirectory={{ install_dir }}/api
@@ -281,7 +281,7 @@
 
     # ==================== Nginx Configuration ====================
 
-    - name: Configure Nginx for API
+    - name: Configure Nginx for Dashboard + API
       copy:
         content: |
           server {
@@ -308,17 +308,35 @@
               ssl_protocols TLSv1.2 TLSv1.3;
               ssl_ciphers HIGH:!aNULL:!MD5;
 
-              location /api {
-                  proxy_pass http://127.0.0.1:{{ api_port | default(8000) }};
+              # Gzip compression
+              gzip on;
+              gzip_vary on;
+              gzip_min_length 1024;
+              gzip_types text/plain text/css text/xml text/javascript application/javascript application/json;
+
+              # API proxy
+              location /api/ {
+                  proxy_pass http://127.0.0.1:{{ api_port | default(8000) }}/api/;
                   proxy_set_header Host $host;
                   proxy_set_header X-Real-IP $remote_addr;
                   proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
                   proxy_set_header X-Forwarded-Proto $scheme;
+                  proxy_http_version 1.1;
+                  proxy_set_header Upgrade $http_upgrade;
+                  proxy_set_header Connection 'upgrade';
+                  proxy_cache_bypass $http_upgrade;
               }
 
+              # Dashboard (SPA routing)
               location / {
-                  root /var/www/html;
-                  try_files $uri $uri/ =404;
+                  root /var/www/mailrice;
+                  try_files $uri $uri/ /index.html;
+
+                  # Cache static assets
+                  location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+                      expires 1y;
+                      add_header Cache-Control "public, immutable";
+                  }
               }
           }
         dest: /etc/nginx/sites-available/mailrice
@@ -356,6 +374,17 @@
     - name: Deploy OpenDKIM
       import_role:
         name: opendkim
+
+    # ==================== Dashboard ====================
+
+    - name: Deploy React Dashboard
+      import_role:
+        name: dashboard
+
+    - name: Reload Nginx after dashboard deployment
+      systemd:
+        name: nginx
+        state: reloaded
 
     - name: Create vmail user
       user:

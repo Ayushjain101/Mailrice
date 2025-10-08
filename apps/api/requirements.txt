@@ -25,3 +25,6 @@ email-validator==2.1.0
 
 # Password hashing (argon2)
 argon2-cffi==23.1.0
+
+# Rate limiting
+slowapi==0.1.9
